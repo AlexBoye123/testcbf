@@ -9,78 +9,88 @@ using namespace geode::prelude;
 
 namespace UltraCBF {
 
+bool isGameplayActive() {
+    auto* playLayer = PlayLayer::get();
+    if (!playLayer) return false;
+    // Activate sub-tick hardware capture strictly when level is active and not paused
+    return !playLayer->m_isPaused && playLayer->m_player1 != nullptr;
+}
+
 #ifdef GEODE_IS_WINDOWS
 static WNDPROC g_originalWndProc = nullptr;
 
 LRESULT CALLBACK CustomWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     auto& engine = SubTickEngine::get();
 
-    switch (msg) {
-        case WM_INPUT: {
-            UINT dwSize = 0;
-            GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, NULL, &dwSize, sizeof(RAWINPUTHEADER));
-            if (dwSize > 0) {
-                std::vector<BYTE> lpb(dwSize);
-                if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, lpb.data(), &dwSize, sizeof(RAWINPUTHEADER)) == dwSize) {
-                    RAWINPUT* raw = reinterpret_cast<RAWINPUT*>(lpb.data());
-                    if (raw->header.dwType == RIM_TYPEKEYBOARD) {
-                        USHORT vkey = raw->data.keyboard.VKey;
-                        bool isBreak = (raw->data.keyboard.Flags & RI_KEY_BREAK) != 0;
+    // Only intercept sub-tick hardware events during active gameplay
+    if (engine.isEnabled() && isGameplayActive()) {
+        switch (msg) {
+            case WM_INPUT: {
+                UINT dwSize = 0;
+                GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, NULL, &dwSize, sizeof(RAWINPUTHEADER));
+                if (dwSize > 0) {
+                    std::vector<BYTE> lpb(dwSize);
+                    if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, lpb.data(), &dwSize, sizeof(RAWINPUTHEADER)) == dwSize) {
+                        RAWINPUT* raw = reinterpret_cast<RAWINPUT*>(lpb.data());
+                        if (raw->header.dwType == RIM_TYPEKEYBOARD) {
+                            USHORT vkey = raw->data.keyboard.VKey;
+                            bool isBreak = (raw->data.keyboard.Flags & RI_KEY_BREAK) != 0;
 
-                        if (vkey == VK_SPACE || vkey == VK_UP || vkey == 'W') {
-                            engine.recordHardwareInput(PlayerButton::Jump, isBreak ? InputType::Release : InputType::Press, false);
-                        } else if (vkey == VK_RIGHT || vkey == 'D') {
-                            engine.recordHardwareInput(PlayerButton::Right, isBreak ? InputType::Release : InputType::Press, false);
-                        } else if (vkey == VK_LEFT || vkey == 'A') {
-                            engine.recordHardwareInput(PlayerButton::Left, isBreak ? InputType::Release : InputType::Press, false);
-                        }
-                    } else if (raw->header.dwType == RIM_TYPEMOUSE) {
-                        USHORT flags = raw->data.mouse.usButtonFlags;
-                        if (flags & RI_MOUSE_LEFT_BUTTON_DOWN) {
-                            engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, false);
-                        } else if (flags & RI_MOUSE_LEFT_BUTTON_UP) {
-                            engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, false);
-                        } else if (flags & RI_MOUSE_RIGHT_BUTTON_DOWN) {
-                            engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, true);
-                        } else if (flags & RI_MOUSE_RIGHT_BUTTON_UP) {
-                            engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, true);
+                            if (vkey == VK_SPACE || vkey == VK_UP || vkey == 'W') {
+                                engine.recordHardwareInput(PlayerButton::Jump, isBreak ? InputType::Release : InputType::Press, false);
+                            } else if (vkey == VK_RIGHT || vkey == 'D') {
+                                engine.recordHardwareInput(PlayerButton::Right, isBreak ? InputType::Release : InputType::Press, false);
+                            } else if (vkey == VK_LEFT || vkey == 'A') {
+                                engine.recordHardwareInput(PlayerButton::Left, isBreak ? InputType::Release : InputType::Press, false);
+                            }
+                        } else if (raw->header.dwType == RIM_TYPEMOUSE) {
+                            USHORT flags = raw->data.mouse.usButtonFlags;
+                            if (flags & RI_MOUSE_LEFT_BUTTON_DOWN) {
+                                engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, false);
+                            } else if (flags & RI_MOUSE_LEFT_BUTTON_UP) {
+                                engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, false);
+                            } else if (flags & RI_MOUSE_RIGHT_BUTTON_DOWN) {
+                                engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, true);
+                            } else if (flags & RI_MOUSE_RIGHT_BUTTON_UP) {
+                                engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, true);
+                            }
                         }
                     }
                 }
+                break;
             }
-            break;
-        }
-        case WM_KEYDOWN:
-        case WM_SYSKEYDOWN: {
-            if ((lParam & (1 << 30)) == 0) { 
-                if (wParam == VK_SPACE || wParam == VK_UP || wParam == 'W') {
-                    engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, false);
+            case WM_KEYDOWN:
+            case WM_SYSKEYDOWN: {
+                if ((lParam & (1 << 30)) == 0) { 
+                    if (wParam == VK_SPACE || wParam == VK_UP || wParam == 'W') {
+                        engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, false);
+                    }
                 }
+                break;
             }
-            break;
-        }
-        case WM_KEYUP:
-        case WM_SYSKEYUP: {
-            if (wParam == VK_SPACE || wParam == VK_UP || wParam == 'W') {
+            case WM_KEYUP:
+            case WM_SYSKEYUP: {
+                if (wParam == VK_SPACE || wParam == VK_UP || wParam == 'W') {
+                    engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, false);
+                }
+                break;
+            }
+            case WM_LBUTTONDOWN: {
+                engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, false);
+                break;
+            }
+            case WM_LBUTTONUP: {
                 engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, false);
+                break;
             }
-            break;
-        }
-        case WM_LBUTTONDOWN: {
-            engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, false);
-            break;
-        }
-        case WM_LBUTTONUP: {
-            engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, false);
-            break;
-        }
-        case WM_RBUTTONDOWN: {
-            engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, true);
-            break;
-        }
-        case WM_RBUTTONUP: {
-            engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, true);
-            break;
+            case WM_RBUTTONDOWN: {
+                engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, true);
+                break;
+            }
+            case WM_RBUTTONUP: {
+                engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, true);
+                break;
+            }
         }
     }
 
@@ -134,7 +144,7 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
     void update(float dt) {
         auto& engine = UltraCBF::SubTickEngine::get();
 
-        if (engine.isEnabled()) {
+        if (engine.isEnabled() && UltraCBF::isGameplayActive()) {
             engine.beginFrameStep(static_cast<double>(dt));
 
             float lastAlphaP1 = 0.0f;
