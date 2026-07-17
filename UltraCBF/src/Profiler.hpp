@@ -10,13 +10,16 @@
 
 namespace UltraCBF {
 
-struct LatencyStats {
+struct DiagnosticStats {
     double avgLatencyMicros{0.0};
     double minLatencyMicros{0.0};
     double maxLatencyMicros{0.0};
     double jitterMicros{0.0};
     double pollingRateHz{0.0};
-    double cpuOverheadMicros{0.0};
+    double effectiveTps{240.0};
+    double catchTimeMicros{0.0};    // Time taken to catch & lock-free queue input in C++
+    double cpuOverheadMicros{0.0};  // SPSC queue drain & vector extrapolation cost
+    double lastSubTickAlpha{0.0};   // Continuous sub-frame phase percentage
 };
 
 template <size_t Samples = 128>
@@ -30,18 +33,38 @@ private:
     uint32_t m_eventsInCurrentSecond{0};
     double m_calculatedPollingRateHz{0.0};
 
+    uint64_t m_lastInputTimestampQPC{0};
+    double m_effectiveTps{240.0};
+
+    double m_lastCatchTimeMicros{0.0};
     double m_lastCpuOverheadMicros{0.0};
+    double m_lastSubTickAlpha{0.0};
     bool m_hudVisible{true};
 
 public:
     PerformanceProfiler() = default;
 
-    void recordInputLatency(double latencyMicros, uint64_t currentQPC, uint64_t qpcFrequency) {
+    void recordInputCatch(double catchMicros) {
+        m_lastCatchTimeMicros = catchMicros;
+    }
+
+    void recordInputLatency(double latencyMicros, double alpha, uint64_t inputQPC, uint64_t currentQPC, uint64_t qpcFrequency) {
         m_latencySamplesMicros[m_sampleIndex % Samples] = latencyMicros;
         m_sampleIndex++;
         m_totalSampleCount++;
 
-        // Calculate Hardware Polling Rate
+        m_lastSubTickAlpha = alpha;
+
+        // Compute inter-input timing delta to determine real-time Effective Input TPS
+        if (m_lastInputTimestampQPC > 0 && inputQPC > m_lastInputTimestampQPC) {
+            double deltaSec = static_cast<double>(inputQPC - m_lastInputTimestampQPC) / static_cast<double>(qpcFrequency);
+            if (deltaSec > 0.00001 && deltaSec < 0.1) {
+                m_effectiveTps = 1.0 / deltaSec;
+            }
+        }
+        m_lastInputTimestampQPC = inputQPC;
+
+        // Compute Polling Frequency
         m_eventsInCurrentSecond++;
         double elapsedSec = static_cast<double>(currentQPC - m_lastInputCounterTimeQPC) / static_cast<double>(qpcFrequency);
         if (elapsedSec >= 1.0) {
@@ -55,10 +78,13 @@ public:
         m_lastCpuOverheadMicros = cpuMicros;
     }
 
-    LatencyStats getStats() const {
-        LatencyStats stats;
+    DiagnosticStats getStats() const {
+        DiagnosticStats stats;
+        stats.catchTimeMicros = m_lastCatchTimeMicros;
         stats.cpuOverheadMicros = m_lastCpuOverheadMicros;
         stats.pollingRateHz = m_calculatedPollingRateHz;
+        stats.effectiveTps = m_effectiveTps;
+        stats.lastSubTickAlpha = m_lastSubTickAlpha;
 
         size_t count = std::min(m_totalSampleCount, Samples);
         if (count == 0) return stats;
@@ -78,7 +104,7 @@ public:
         stats.minLatencyMicros = minVal;
         stats.maxLatencyMicros = maxVal;
 
-        // Calculate Jitter (Standard Deviation)
+        // Jitter Calculation
         double varianceSum = 0.0;
         for (size_t i = 0; i < count; ++i) {
             double diff = m_latencySamplesMicros[i] - stats.avgLatencyMicros;
