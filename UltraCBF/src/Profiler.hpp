@@ -16,7 +16,7 @@ struct DiagnosticStats {
     double maxLatencyMicros{0.0};
     double jitterMicros{0.0};
     double pollingRateHz{0.0};
-    double effectiveTps{240.0};
+    double effectiveTps{0.0};       // True measured physical input precision TPS
     double catchTimeMicros{0.0};    // Time taken to catch & lock-free queue input in C++
     double cpuOverheadMicros{0.0};  // SPSC queue drain & vector extrapolation cost
     double lastSubTickAlpha{0.0};   // Continuous sub-frame phase percentage
@@ -34,7 +34,7 @@ private:
     double m_calculatedPollingRateHz{0.0};
 
     uint64_t m_lastInputTimestampQPC{0};
-    double m_effectiveTps{240.0};
+    double m_effectiveTps{0.0};
 
     double m_lastCatchTimeMicros{0.0};
     double m_lastCpuOverheadMicros{0.0};
@@ -55,10 +55,10 @@ public:
 
         m_lastSubTickAlpha = alpha;
 
-        // Compute inter-input timing delta to determine real-time Effective Input TPS
+        // Compute true physical inter-input timing delta to calculate real-time TPS
         if (m_lastInputTimestampQPC > 0 && inputQPC > m_lastInputTimestampQPC) {
             double deltaSec = static_cast<double>(inputQPC - m_lastInputTimestampQPC) / static_cast<double>(qpcFrequency);
-            if (deltaSec > 0.00001 && deltaSec < 0.1) {
+            if (deltaSec > 0.0000001 && deltaSec < 2.0) { // Valid non-zero hardware delta
                 m_effectiveTps = 1.0 / deltaSec;
             }
         }
@@ -104,7 +104,7 @@ public:
         stats.minLatencyMicros = minVal;
         stats.maxLatencyMicros = maxVal;
 
-        // Jitter Calculation
+        // Jitter Standard Deviation Calculation
         double varianceSum = 0.0;
         for (size_t i = 0; i < count; ++i) {
             double diff = m_latencySamplesMicros[i] - stats.avgLatencyMicros;
