@@ -37,7 +37,7 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
         if (!engine.isEnabled()) {
             if (UltraCBF::isGameplayActive() && push) {
                 uint64_t nowQPC = engine.getCurrentQPC();
-                engine.getProfiler().recordInputLatency(2080.0, nowQPC, engine.getQPCFrequency()); // Standard 480TPS / Vanilla step baseline
+                engine.getProfiler().recordInputLatency(2080.0, 0.0, nowQPC, nowQPC, engine.getQPCFrequency());
             }
             GJBaseGameLayer::handleButton(push, button, isPlayer2);
             return;
@@ -114,7 +114,7 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
 
         auto& profiler = UltraCBF::SubTickEngine::get().getProfiler();
         if (profiler.isHudVisible()) {
-            auto label = CCLabelBMFont::create("UltraCBF Profiler Loading...", "bigFont.fnt");
+            auto label = CCLabelBMFont::create("UltraCBF Telemetry Initializing...", "bigFont.fnt");
             if (label) {
                 label->setAnchorPoint({0.0f, 1.0f});
                 label->setAlignment(cocos2d::kCCTextAlignmentLeft);
@@ -147,25 +147,27 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
             std::string text;
             if (engine.isEnabled()) {
                 text = fmt::format(
-                    "[ UltraCBF Active Engine ]\n"
-                    "Polling Rate: {:.0f} Hz\n"
-                    "Avg Input Latency: {:.3f} ms ({:.1f} us)\n"
-                    "Latency Jitter: ±{:.3f} ms\n"
-                    "Peak Latency: {:.3f} ms\n"
-                    "CPU Overhead: {:.1f} us",
-                    stats.pollingRateHz,
+                    "[ UltraCBF Hardware Telemetry ]\n"
+                    "Active Precision: {:.0f} TPS\n"
+                    "C++ Queue Ingestion Delay: {:.2f} us\n"
+                    "Input Dispatch Delay: {:.3f} ms ({:.1f} us)\n"
+                    "Sub-Frame Phase Offset: {:.1f}%\n"
+                    "Jitter Variance: ±{:.3f} ms\n"
+                    "SPSC Queue Drain Cost: {:.2f} us",
+                    stats.effectiveTps,
+                    stats.catchTimeMicros,
                     stats.avgLatencyMicros / 1000.0, stats.avgLatencyMicros,
+                    stats.lastSubTickAlpha * 100.0,
                     stats.jitterMicros / 1000.0,
-                    stats.maxLatencyMicros / 1000.0,
                     stats.cpuOverheadMicros
                 );
             } else {
                 text = fmt::format(
-                    "[ UltraCBF Engine OFF (Standard Baseline) ]\n"
-                    "Polling Rate: {:.0f} Hz\n"
+                    "[ UltraCBF Engine OFF (Pass-Through) ]\n"
+                    "Active Precision: {:.0f} TPS\n"
                     "Standard Step Latency: {:.3f} ms\n"
-                    "Status: Pass-Through Mode Active",
-                    stats.pollingRateHz,
+                    "Status: Vanilla / External Baseline Mode",
+                    stats.effectiveTps,
                     stats.avgLatencyMicros / 1000.0
                 );
             }
