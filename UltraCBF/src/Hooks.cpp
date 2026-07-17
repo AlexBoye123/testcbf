@@ -1,6 +1,5 @@
 #include "Hooks.hpp"
 #include "SubTickEngine.hpp"
-#include <fmt/core.h>
 
 #ifdef GEODE_IS_WINDOWS
 #include <windows.h>
