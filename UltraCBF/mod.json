@@ -12,6 +12,12 @@
 	"developer": "Agent",
 	"description": "Zero-allocation, lock-free sub-tick input engine with QPC micro-timestamping, real-time hardware benchmarking, and cache-aligned queues for GD 2.2081.",
 	"settings": {
+		"enable-engine": {
+			"name": "Enable UltraCBF Engine",
+			"description": "Toggle UltraCBF sub-tick engine ON or OFF. Set to OFF to run standard CBF or Vanilla GD while benchmarking live latency on the HUD.",
+			"type": "bool",
+			"default": true
+		},
 		"benchmark-overlay": {
 			"name": "Performance & Latency Benchmark HUD",
 			"description": "Displays real-time hardware polling rate (Hz), sub-tick input dispatch latency (µs), jitter, and CPU overhead on PlayLayer.",
