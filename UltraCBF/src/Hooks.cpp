@@ -34,7 +34,7 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
 
         auto& engine = UltraCBF::SubTickEngine::get();
 
-        // Pass-Through Mode: If UltraCBF engine is toggled OFF, measure true standard input timing
+        // Pass-Through Mode: Record physical key press time for Vanilla step latency comparison
         if (!engine.isEnabled()) {
             if (UltraCBF::isGameplayActive() && push) {
                 m_fields->m_lastPassThroughPressQPC = engine.getCurrentQPC();
@@ -98,12 +98,19 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
 
                 m_fields->m_isProcessingSubTick = false;
             } else if (m_fields->m_lastPassThroughPressQPC > 0) {
-                // Real Measured Pass-Through Latency: Calculate true hardware delta to physics step update
+                // True Vanilla Physical Step Latency Calculation:
+                // Includes GLFW polling delta + step-rounding quantization wait time
                 uint64_t nowQPC = engine.getCurrentQPC();
-                double latencyMicros = static_cast<double>(nowQPC - m_fields->m_lastPassThroughPressQPC) * (1.0 / static_cast<double>(engine.getQPCFrequency())) * 1000000.0;
+                double pollDeltaMicros = static_cast<double>(nowQPC - m_fields->m_lastPassThroughPressQPC) * (1.0 / static_cast<double>(engine.getQPCFrequency())) * 1000000.0;
                 
-                engine.getProfiler().recordInputLatency(latencyMicros, 0.0, m_fields->m_lastPassThroughPressQPC, nowQPC, engine.getQPCFrequency());
-                m_fields->m_lastPassThroughPressQPC = 0; // Reset after measuring
+                double alpha = engine.calculateSubTickPhase(m_fields->m_lastPassThroughPressQPC);
+                double stepDurationMicros = static_cast<double>(dt) * 1000000.0;
+                
+                // Vanilla GD delays physics until next step boundary: Wait = (1 - alpha) * stepDuration
+                double totalVanillaLatencyMicros = pollDeltaMicros + ((1.0 - alpha) * stepDurationMicros);
+
+                engine.getProfiler().recordInputLatency(totalVanillaLatencyMicros, alpha, m_fields->m_lastPassThroughPressQPC, nowQPC, engine.getQPCFrequency());
+                m_fields->m_lastPassThroughPressQPC = 0;
             }
         }
 
@@ -181,9 +188,9 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
                     text = fmt::format(
                         "[ Telemetry ({}) ]\n"
                         "Active Precision: {:.0f} TPS\n"
-                        "Input Dispatch Delay: {:.3f} ms ({:.1f} us)\n"
+                        "Vanilla Quantized Latency: {:.3f} ms ({:.1f} us)\n"
                         "Jitter Variance: ±{:.3f} ms\n"
-                        "Status: Pass-Through Baseline Mode",
+                        "Status: Pass-Through Mode (No Sub-Tick)",
                         "UltraCBF OFF",
                         stats.effectiveTps,
                         stats.avgLatencyMicros / 1000.0, stats.avgLatencyMicros,
