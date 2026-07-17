@@ -15,21 +15,21 @@ $on_mod(Loaded) {
     UltraCBF::SubTickEngine::get().init();
 
     // Listen for real-time setting changes via Geode API
-    listenForSettingChanges("benchmark-overlay", [](bool val) {
+    listenForSettingChanges<bool>("benchmark-overlay", [](bool val) {
         UltraCBF::SubTickEngine::get().getProfiler().setHudVisible(val);
         log::info("[UltraCBF] Benchmark HUD visibility set to: {}", val);
     });
 
-    listenForSettingChanges("polling-mode", [](std::string val) {
+    listenForSettingChanges<std::string>("polling-mode", [](std::string val) {
         log::info("[UltraCBF] Polling Mode updated to: {}", val);
     });
 
-    listenForSettingChanges("deduplication", [](bool val) {
+    listenForSettingChanges<bool>("deduplication", [](bool val) {
         UltraCBF::SubTickEngine::get().setDeduplicationEnabled(val);
         log::info("[UltraCBF] High-Hz Deduplication filter set to: {}", val);
     });
 
-    listenForSettingChanges("subtick-extrapolation", [](bool val) {
+    listenForSettingChanges<bool>("subtick-extrapolation", [](bool val) {
         UltraCBF::SubTickEngine::get().setEnabled(val);
         log::info("[UltraCBF] Sub-tick extrapolation set to: {}", val);
     });
