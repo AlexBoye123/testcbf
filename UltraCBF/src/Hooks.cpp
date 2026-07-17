@@ -1,10 +1,6 @@
 #include "Hooks.hpp"
 #include "SubTickEngine.hpp"
 
-#ifdef GEODE_IS_WINDOWS
-#include <windows.h>
-#endif
-
 using namespace geode::prelude;
 
 namespace UltraCBF {
@@ -12,135 +8,54 @@ namespace UltraCBF {
 bool isGameplayActive() {
     auto* playLayer = PlayLayer::get();
     if (!playLayer) return false;
-    // Activate sub-tick hardware capture strictly when level is active and not paused
     return !playLayer->m_isPaused && playLayer->m_player1 != nullptr;
 }
 
-#ifdef GEODE_IS_WINDOWS
-static WNDPROC g_originalWndProc = nullptr;
-
-LRESULT CALLBACK CustomWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    auto& engine = SubTickEngine::get();
-
-    // Only intercept sub-tick hardware events during active gameplay
-    if (engine.isEnabled() && isGameplayActive()) {
-        switch (msg) {
-            case WM_INPUT: {
-                UINT dwSize = 0;
-                GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, NULL, &dwSize, sizeof(RAWINPUTHEADER));
-                if (dwSize > 0) {
-                    std::vector<BYTE> lpb(dwSize);
-                    if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, lpb.data(), &dwSize, sizeof(RAWINPUTHEADER)) == dwSize) {
-                        RAWINPUT* raw = reinterpret_cast<RAWINPUT*>(lpb.data());
-                        if (raw->header.dwType == RIM_TYPEKEYBOARD) {
-                            USHORT vkey = raw->data.keyboard.VKey;
-                            bool isBreak = (raw->data.keyboard.Flags & RI_KEY_BREAK) != 0;
-
-                            if (vkey == VK_SPACE || vkey == VK_UP || vkey == 'W') {
-                                engine.recordHardwareInput(PlayerButton::Jump, isBreak ? InputType::Release : InputType::Press, false);
-                            } else if (vkey == VK_RIGHT || vkey == 'D') {
-                                engine.recordHardwareInput(PlayerButton::Right, isBreak ? InputType::Release : InputType::Press, false);
-                            } else if (vkey == VK_LEFT || vkey == 'A') {
-                                engine.recordHardwareInput(PlayerButton::Left, isBreak ? InputType::Release : InputType::Press, false);
-                            }
-                        } else if (raw->header.dwType == RIM_TYPEMOUSE) {
-                            USHORT flags = raw->data.mouse.usButtonFlags;
-                            if (flags & RI_MOUSE_LEFT_BUTTON_DOWN) {
-                                engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, false);
-                            } else if (flags & RI_MOUSE_LEFT_BUTTON_UP) {
-                                engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, false);
-                            } else if (flags & RI_MOUSE_RIGHT_BUTTON_DOWN) {
-                                engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, true);
-                            } else if (flags & RI_MOUSE_RIGHT_BUTTON_UP) {
-                                engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, true);
-                            }
-                        }
-                    }
-                }
-                break;
-            }
-            case WM_KEYDOWN:
-            case WM_SYSKEYDOWN: {
-                if ((lParam & (1 << 30)) == 0) { 
-                    if (wParam == VK_SPACE || wParam == VK_UP || wParam == 'W') {
-                        engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, false);
-                    }
-                }
-                break;
-            }
-            case WM_KEYUP:
-            case WM_SYSKEYUP: {
-                if (wParam == VK_SPACE || wParam == VK_UP || wParam == 'W') {
-                    engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, false);
-                }
-                break;
-            }
-            case WM_LBUTTONDOWN: {
-                engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, false);
-                break;
-            }
-            case WM_LBUTTONUP: {
-                engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, false);
-                break;
-            }
-            case WM_RBUTTONDOWN: {
-                engine.recordHardwareInput(PlayerButton::Jump, InputType::Press, true);
-                break;
-            }
-            case WM_RBUTTONUP: {
-                engine.recordHardwareInput(PlayerButton::Jump, InputType::Release, true);
-                break;
-            }
-        }
-    }
-
-    return CallWindowProc(g_originalWndProc, hwnd, msg, wParam, lParam);
-}
-
 void installPlatformInputHooks() {
-#if defined(GEODE_IS_WINDOWS)
-    HWND hwnd = wglGetCurrentDC() ? WindowFromDC(wglGetCurrentDC()) : NULL;
-    if (!hwnd) {
-        hwnd = GetActiveWindow();
-    }
-    if (!hwnd) {
-        hwnd = GetForegroundWindow();
-    }
-
-    if (hwnd) {
-        if (!g_originalWndProc) {
-            g_originalWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtr(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(CustomWndProc)));
-            log::info("[UltraCBF] Low-latency Win32 WndProc hook attached.");
-        }
-
-        RAWINPUTDEVICE rid[2];
-        rid[0].usUsagePage = 0x01; rid[0].usUsage = 0x06;
-        rid[0].dwFlags = RIDEV_INPUTSINK;
-        rid[0].hwndTarget = hwnd;
-
-        rid[1].usUsagePage = 0x01; rid[1].usUsage = 0x02;
-        rid[1].dwFlags = RIDEV_INPUTSINK;
-        rid[1].hwndTarget = hwnd;
-
-        if (RegisterRawInputDevices(rid, 2, sizeof(RAWINPUTDEVICE))) {
-            log::info("[UltraCBF] Driver-level WM_INPUT devices registered.");
-        }
-    }
-#else
-    log::info("[UltraCBF] High-resolution cross-platform input engine active.");
-#endif
+    log::info("[UltraCBF] Sub-tick engine hooked directly to Geode input dispatcher.");
 }
-#else
-void installPlatformInputHooks() {
-    log::info("[UltraCBF] High-resolution cross-platform input engine active.");
-}
-#endif
 
 } // namespace UltraCBF
 
 // Geode Engine Modifiers for Geometry Dash 2.2081
 
 class $modify(UltraGameLayerHook, GJBaseGameLayer) {
+    struct Fields {
+        bool m_buttonStates[10][2]{{false}}; // Tracks button press state [buttonID][isPlayer2]
+        bool m_isProcessingSubTick{false};   // Re-entrancy guard during sub-tick replay
+    };
+
+    void handleButton(bool push, int button, bool isPlayer2) {
+        // If we are currently replaying a sub-tick event, call original core handler
+        if (m_fields->m_isProcessingSubTick) {
+            GJBaseGameLayer::handleButton(push, button, isPlayer2);
+            return;
+        }
+
+        auto& engine = UltraCBF::SubTickEngine::get();
+
+        // If outside active gameplay or engine disabled, pass straight to vanilla GD
+        if (!engine.isEnabled() || !UltraCBF::isGameplayActive()) {
+            GJBaseGameLayer::handleButton(push, button, isPlayer2);
+            return;
+        }
+
+        // Auto-Repeat Filter: Prevent Windows key-hold repeat messages from generating 30 CPS spam
+        int btnIdx = std::clamp(button, 0, 9);
+        int p2Idx = isPlayer2 ? 1 : 0;
+
+        if (push == m_fields->m_buttonStates[btnIdx][p2Idx]) {
+            return; // Ignore redundant key-repeat signal
+        }
+        m_fields->m_buttonStates[btnIdx][p2Idx] = push;
+
+        // Record high-resolution hardware timestamp immediately
+        UltraCBF::PlayerButton btnEnum = static_cast<UltraCBF::PlayerButton>(button);
+        UltraCBF::InputType typeEnum = push ? UltraCBF::InputType::Press : UltraCBF::InputType::Release;
+
+        engine.recordHardwareInput(btnEnum, typeEnum, isPlayer2);
+    }
+
     void update(float dt) {
         auto& engine = UltraCBF::SubTickEngine::get();
 
@@ -149,6 +64,8 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
 
             float lastAlphaP1 = 0.0f;
             float lastAlphaP2 = 0.0f;
+
+            m_fields->m_isProcessingSubTick = true;
 
             engine.processPendingSubTicks([this, dt, &lastAlphaP1, &lastAlphaP2](const UltraCBF::TimestampedInput& evt, double alpha) {
                 bool isDown = (evt.type == UltraCBF::InputType::Press);
@@ -160,6 +77,7 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
                 float currentAlpha = static_cast<float>(alpha);
                 float deltaAlpha = currentAlpha - lastAlpha;
 
+                // Continuous Sub-Tick Spatial Vector Interpolation
                 if (targetPlayer && deltaAlpha > 0.0f) {
                     cocos2d::CCPoint currentPos = targetPlayer->getPosition();
                     cocos2d::CCPoint velocity = targetPlayer->m_position;
@@ -169,8 +87,11 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
                     lastAlpha = currentAlpha;
                 }
 
+                // Dispatch button event to GD core
                 this->handleButton(isDown, buttonVal, evt.isPlayer2);
             });
+
+            m_fields->m_isProcessingSubTick = false;
         }
 
         GJBaseGameLayer::update(dt);
@@ -186,8 +107,6 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
             return false;
         }
-
-        UltraCBF::installPlatformInputHooks();
 
         auto& profiler = UltraCBF::SubTickEngine::get().getProfiler();
         if (profiler.isHudVisible()) {
