@@ -102,12 +102,8 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
             return false;
         }
 
-        // Ensure update loop is scheduled
-        this->scheduleUpdate();
-
         auto& profiler = UltraCBF::SubTickEngine::get().getProfiler();
         if (profiler.isHudVisible()) {
-            // Use bigFont.fnt which is 100% guaranteed to exist across all GD versions
             auto label = CCLabelBMFont::create("UltraCBF Profiler Loading...", "bigFont.fnt");
             if (label) {
                 label->setAnchorPoint({0.0f, 1.0f});
@@ -118,7 +114,6 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
                 auto winSize = CCDirector::sharedDirector()->getWinSize();
                 label->setPosition({10.0f, winSize.height - 10.0f});
 
-                // Attach to UILayer if available, else PlayLayer directly
                 if (m_uiLayer) {
                     m_uiLayer->addChild(label, 99999);
                 } else {
@@ -132,8 +127,8 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
         return true;
     }
 
-    void update(float dt) {
-        PlayLayer::update(dt);
+    void postUpdate(float dt) {
+        PlayLayer::postUpdate(dt);
 
         if (m_fields->m_benchmarkLabel) {
             auto& engine = UltraCBF::SubTickEngine::get();
