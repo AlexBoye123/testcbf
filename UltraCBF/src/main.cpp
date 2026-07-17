@@ -15,6 +15,11 @@ $on_mod(Loaded) {
     UltraCBF::SubTickEngine::get().init();
 
     // Listen for real-time setting changes via Geode API
+    listenForSettingChanges<bool>("enable-engine", [](bool val) {
+        UltraCBF::SubTickEngine::get().setEnabled(val);
+        log::info("[UltraCBF] Sub-tick engine state set to: {}", val);
+    });
+
     listenForSettingChanges<bool>("benchmark-overlay", [](bool val) {
         UltraCBF::SubTickEngine::get().getProfiler().setHudVisible(val);
         log::info("[UltraCBF] Benchmark HUD visibility set to: {}", val);
