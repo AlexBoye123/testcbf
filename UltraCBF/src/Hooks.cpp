@@ -79,47 +79,55 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
             if (engine.isEnabled()) {
                 engine.beginFrameStep(static_cast<double>(dt));
 
-                float lastAlphaP1 = 0.0f;
-                float lastAlphaP2 = 0.0f;
-
+                float lastAlpha = 0.0f;
                 m_fields->m_isProcessingSubTick = true;
 
-                engine.processPendingSubTicks([this, dt, &lastAlphaP1, &lastAlphaP2](const UltraCBF::TimestampedInput& evt, double alpha) {
+                // Check if level is currently in Dual Mode
+                bool isDualActive = m_gameState.m_isDualMode && m_player2 != nullptr;
+
+                engine.processPendingSubTicks([this, dt, isDualActive, &lastAlpha](const UltraCBF::TimestampedInput& evt, double alpha) {
                     bool isDown = (evt.type == UltraCBF::InputType::Press);
                     int buttonVal = static_cast<int>(evt.button);
-
-                    PlayerObject* targetPlayer = (evt.isPlayer2 && m_player2) ? m_player2 : m_player1;
-                    float& lastAlpha = (evt.isPlayer2 && m_player2) ? lastAlphaP2 : lastAlphaP1;
 
                     float currentAlpha = static_cast<float>(alpha);
                     float deltaAlpha = currentAlpha - lastAlpha;
 
-                    if (targetPlayer && deltaAlpha > 0.0f) {
-                        cocos2d::CCPoint currentPos = targetPlayer->getPosition();
-                        cocos2d::CCPoint velocity = targetPlayer->m_position;
-                        
+                    if (deltaAlpha > 0.0f) {
                         float subTickDt = dt * deltaAlpha;
-                        targetPlayer->setPosition(currentPos + (velocity * subTickDt));
+
+                        // Continuous Position Extrapolation for Player 1
+                        if (m_player1) {
+                            cocos2d::CCPoint pos1 = m_player1->getPosition();
+                            cocos2d::CCPoint vel1 = m_player1->m_position;
+                            m_player1->setPosition(pos1 + (vel1 * subTickDt));
+                        }
+
+                        // Synchronous Lockstep Position Extrapolation for Player 2 (Keeps dual ships/cubes 100% aligned in X space)
+                        if (isDualActive && m_player2) {
+                            cocos2d::CCPoint pos2 = m_player2->getPosition();
+                            cocos2d::CCPoint vel2 = m_player2->m_position;
+                            m_player2->setPosition(pos2 + (vel2 * subTickDt));
+                        }
+
                         lastAlpha = currentAlpha;
                     }
 
-                    this->handleButton(isDown, buttonVal, evt.isPlayer2);
+                    // Dispatch jump/action to targeted player (Player 1 or Player 2)
+                    this->handleButton(isDown, buttonVal, evt.isPlayer2 && isDualActive);
                 });
 
                 m_fields->m_isProcessingSubTick = false;
             } else if (m_fields->m_lastPassThroughPressQPC > 0) {
-                // True Vanilla Physical Step Latency Calculation:
-                // Measures GLFW polling delta + step-rounding quantization delay
+                // True Vanilla Physical Step Latency Calculation
                 uint64_t nowQPC = engine.getCurrentQPC();
                 double pollDeltaMicros = static_cast<double>(nowQPC - m_fields->m_lastPassThroughPressQPC) * (1.0 / static_cast<double>(engine.getQPCFrequency())) * 1000000.0;
                 
                 double alpha = engine.calculateSubTickPhase(m_fields->m_lastPassThroughPressQPC);
                 double stepDurationMicros = static_cast<double>(dt) * 1000000.0;
                 
-                // Vanilla GD delays physics until next step boundary: Wait = (1 - alpha) * stepDuration
                 double totalVanillaLatencyMicros = pollDeltaMicros + ((1.0 - alpha) * stepDurationMicros);
 
-                engine.getProfiler().recordInputLatency(totalVanillaLatencyMicros, 0.0, m_fields->m_lastPassThroughPressQPC, nowQPC, engine.getQPCFrequency());
+                engine.getProfiler().recordInputLatency(totalVanillaLatencyMicros, alpha, m_fields->m_lastPassThroughPressQPC, nowQPC, engine.getQPCFrequency());
                 m_fields->m_lastPassThroughPressQPC = 0;
             }
         }
@@ -145,11 +153,11 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
             if (label) {
                 label->setAnchorPoint({0.0f, 1.0f});
                 label->setAlignment(cocos2d::kCCTextAlignmentLeft);
-                label->setScale(0.32f);
+                label->setScale(0.30f);
                 label->setOpacity(235);
                 
                 auto winSize = CCDirector::sharedDirector()->getWinSize();
-                label->setPosition({10.0f, winSize.height - 10.0f});
+                label->setPosition({20.0f, winSize.height - 15.0f});
 
                 if (m_uiLayer) {
                     m_uiLayer->addChild(label, 99999);
@@ -200,7 +208,7 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
                         "Vanilla Delay: {:.3f} ms ({:.1f} us)\n"
                         "Phase Offset: 0.0% (Step Rounded)\n"
                         "Jitter: +- {:.3f} ms\n"
-                        "Status: Pass-Through Baseline",
+                        "Status: Pass-Through Mode",
                         stats.effectiveTps,
                         stats.avgLatencyMicros / 1000.0, stats.avgLatencyMicros,
                         stats.jitterMicros / 1000.0
