@@ -43,7 +43,7 @@ void SubTickEngine::recordHardwareInput(PlayerButton button, InputType type, boo
 
     const uint64_t nowQPC = getCurrentQPC();
 
-    // High-Frequency Hardware Jitter & Debounce Filter (200µs threshold):
+    // Hardware Jitter & Debounce Filter (200µs threshold if enabled)
     if (m_deduplicationEnabled && type == InputType::Press) {
         double elapsedSec = static_cast<double>(nowQPC - m_lastProcessedPressQPC) * m_secondsPerQpcTick;
         if (elapsedSec < 0.0002) { // 200 microseconds
@@ -61,13 +61,18 @@ void SubTickEngine::recordHardwareInput(PlayerButton button, InputType type, boo
     };
 
     m_ringBuffer.push(evt);
+
+    // Measure C++ Lock-Free Queue Ingestion Delay (Catch Time)
+    uint64_t catchQPC = getCurrentQPC();
+    double catchMicros = static_cast<double>(catchQPC - nowQPC) * m_secondsPerQpcTick * 1000000.0;
+    m_profiler.recordInputCatch(catchMicros);
 }
 
 void SubTickEngine::beginFrameStep(double targetDeltaSeconds) {
     m_previousFrameStartQPC = m_currentFrameStartQPC;
     m_currentFrameStartQPC = getCurrentQPC();
 
-    // Fallback safety for first frame
+    // Fallback safety
     if (m_previousFrameStartQPC == 0 || m_previousFrameStartQPC >= m_currentFrameStartQPC) {
         uint64_t deltaTicks = static_cast<uint64_t>(targetDeltaSeconds * static_cast<double>(m_qpcFrequency));
         if (deltaTicks > 0 && m_currentFrameStartQPC >= deltaTicks) {
@@ -80,10 +85,10 @@ void SubTickEngine::beginFrameStep(double targetDeltaSeconds) {
 
 double SubTickEngine::calculateSubTickPhase(uint64_t qpcTimestamp) const noexcept {
     if (qpcTimestamp <= m_previousFrameStartQPC) {
-        return 0.0; // Input occurred prior to or at start of elapsed step
+        return 0.0;
     }
     if (qpcTimestamp >= m_currentFrameStartQPC) {
-        return 1.0; // Input occurred at or after end of step
+        return 1.0;
     }
 
     uint64_t elapsedStepTicks = m_currentFrameStartQPC - m_previousFrameStartQPC;
@@ -104,10 +109,10 @@ void SubTickEngine::processPendingSubTicks(std::function<void(const TimestampedI
     while (m_ringBuffer.pop(evt)) {
         double alpha = calculateSubTickPhase(evt.qpcTimestamp);
 
-        // Compute real-time hardware dispatch latency
+        // Measure Total Input-to-Step Dispatch Latency in Microseconds
         uint64_t dispatchQPC = getCurrentQPC();
         double latencyMicros = static_cast<double>(dispatchQPC - evt.qpcTimestamp) * m_secondsPerQpcTick * 1000000.0;
-        m_profiler.recordInputLatency(latencyMicros, dispatchQPC, m_qpcFrequency);
+        m_profiler.recordInputLatency(latencyMicros, alpha, evt.qpcTimestamp, dispatchQPC, m_qpcFrequency);
 
         dispatchCallback(evt, alpha);
     }
