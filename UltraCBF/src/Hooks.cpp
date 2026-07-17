@@ -21,10 +21,20 @@ void installPlatformInputHooks() {
 
 class $modify(UltraGameLayerHook, GJBaseGameLayer) {
     struct Fields {
-        bool m_buttonStates[10][2]{{false}}; // Tracks button press state [buttonID][isPlayer2]
-        bool m_isProcessingSubTick{false};   // Re-entrancy guard during sub-tick replay
+        bool m_buttonStates[10][2]{{false}};   // Tracks button press state [buttonID][isPlayer2]
+        bool m_isProcessingSubTick{false};     // Re-entrancy guard during sub-tick replay
         uint64_t m_lastPassThroughPressQPC{0}; // Real-time timestamp tracking for Pass-Through mode
     };
+
+    void resetLevel() {
+        GJBaseGameLayer::resetLevel();
+
+        for (int b = 0; b < 10; ++b) {
+            m_fields->m_buttonStates[b][0] = false;
+            m_fields->m_buttonStates[b][1] = false;
+        }
+        m_fields->m_lastPassThroughPressQPC = 0;
+    }
 
     void handleButton(bool push, int button, bool isPlayer2) {
         if (m_fields->m_isProcessingSubTick) {
@@ -52,7 +62,7 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
         int p2Idx = isPlayer2 ? 1 : 0;
 
         if (push == m_fields->m_buttonStates[btnIdx][p2Idx]) {
-            return; // Filter duplicate auto-repeat signals
+            return; // Filter duplicate OS auto-repeat signals
         }
         m_fields->m_buttonStates[btnIdx][p2Idx] = push;
 
@@ -99,7 +109,7 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
                 m_fields->m_isProcessingSubTick = false;
             } else if (m_fields->m_lastPassThroughPressQPC > 0) {
                 // True Vanilla Physical Step Latency Calculation:
-                // Includes GLFW polling delta + step-rounding quantization wait time
+                // Measures GLFW polling delta + step-rounding quantization delay
                 uint64_t nowQPC = engine.getCurrentQPC();
                 double pollDeltaMicros = static_cast<double>(nowQPC - m_fields->m_lastPassThroughPressQPC) * (1.0 / static_cast<double>(engine.getQPCFrequency())) * 1000000.0;
                 
@@ -109,7 +119,7 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
                 // Vanilla GD delays physics until next step boundary: Wait = (1 - alpha) * stepDuration
                 double totalVanillaLatencyMicros = pollDeltaMicros + ((1.0 - alpha) * stepDurationMicros);
 
-                engine.getProfiler().recordInputLatency(totalVanillaLatencyMicros, alpha, m_fields->m_lastPassThroughPressQPC, nowQPC, engine.getQPCFrequency());
+                engine.getProfiler().recordInputLatency(totalVanillaLatencyMicros, 0.0, m_fields->m_lastPassThroughPressQPC, nowQPC, engine.getQPCFrequency());
                 m_fields->m_lastPassThroughPressQPC = 0;
             }
         }
@@ -135,8 +145,8 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
             if (label) {
                 label->setAnchorPoint({0.0f, 1.0f});
                 label->setAlignment(cocos2d::kCCTextAlignmentLeft);
-                label->setScale(0.35f);
-                label->setOpacity(230);
+                label->setScale(0.32f);
+                label->setOpacity(235);
                 
                 auto winSize = CCDirector::sharedDirector()->getWinSize();
                 label->setPosition({10.0f, winSize.height - 10.0f});
@@ -169,14 +179,13 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
                 std::string text;
                 if (engine.isEnabled()) {
                     text = fmt::format(
-                        "[ Telemetry ({}) ]\n"
-                        "Active Precision: {:.0f} TPS\n"
-                        "C++ Queue Ingestion Delay: {:.2f} us\n"
-                        "Input Dispatch Delay: {:.3f} ms ({:.1f} us)\n"
-                        "Sub-Frame Phase Offset: {:.1f}%\n"
-                        "Jitter Variance: ±{:.3f} ms\n"
-                        "SPSC Queue Drain Cost: {:.2f} us",
-                        "UltraCBF Active",
+                        "[ Telemetry: UltraCBF Active ]\n"
+                        "Precision: {:.0f} TPS\n"
+                        "Queue Ingest: {:.2f} us\n"
+                        "Input Delay: {:.3f} ms ({:.1f} us)\n"
+                        "Phase Offset: {:.1f}%\n"
+                        "Jitter: +- {:.3f} ms\n"
+                        "SPSC Drain: {:.2f} us",
                         stats.effectiveTps,
                         stats.catchTimeMicros,
                         stats.avgLatencyMicros / 1000.0, stats.avgLatencyMicros,
@@ -186,12 +195,12 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
                     );
                 } else {
                     text = fmt::format(
-                        "[ Telemetry ({}) ]\n"
-                        "Active Precision: {:.0f} TPS\n"
-                        "Vanilla Quantized Latency: {:.3f} ms ({:.1f} us)\n"
-                        "Jitter Variance: ±{:.3f} ms\n"
-                        "Status: Pass-Through Mode (No Sub-Tick)",
-                        "UltraCBF OFF",
+                        "[ Telemetry: UltraCBF OFF ]\n"
+                        "Precision: {:.0f} TPS\n"
+                        "Vanilla Delay: {:.3f} ms ({:.1f} us)\n"
+                        "Phase Offset: 0.0% (Step Rounded)\n"
+                        "Jitter: +- {:.3f} ms\n"
+                        "Status: Pass-Through Baseline",
                         stats.effectiveTps,
                         stats.avgLatencyMicros / 1000.0, stats.avgLatencyMicros,
                         stats.jitterMicros / 1000.0
