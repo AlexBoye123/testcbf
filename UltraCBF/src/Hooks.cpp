@@ -1,6 +1,10 @@
 #include "Hooks.hpp"
 #include "SubTickEngine.hpp"
 
+#ifdef GEODE_IS_WINDOWS
+#include <windows.h>
+#endif
+
 using namespace geode::prelude;
 
 namespace UltraCBF {
@@ -11,9 +15,76 @@ bool isGameplayActive() {
     return !playLayer->m_isPaused && playLayer->m_player1 != nullptr;
 }
 
-void installPlatformInputHooks() {
-    log::info("[UltraCBF] Sub-tick engine hooked directly to Geode input dispatcher.");
+#ifdef GEODE_IS_WINDOWS
+static HHOOK g_kbdHook = NULL;
+static HHOOK g_mouseHook = NULL;
+
+LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HC_ACTION && UltraCBF::isGameplayActive()) {
+        KBDLLHOOKSTRUCT* pKbd = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+        if (pKbd) {
+            bool isPress = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
+            bool isRelease = (wParam == WM_KEYUP || wParam == WM_SYSKEYUP);
+
+            if (isPress || isRelease) {
+                DWORD vk = pKbd->vkCode;
+                UltraCBF::PlayerButton btn = UltraCBF::PlayerButton::Jump;
+                bool isActionKey = false;
+
+                if (vk == VK_SPACE || vk == VK_UP || vk == 'W') {
+                    btn = UltraCBF::PlayerButton::Jump;
+                    isActionKey = true;
+                } else if (vk == VK_RIGHT || vk == 'D') {
+                    btn = UltraCBF::PlayerButton::Right;
+                    isActionKey = true;
+                } else if (vk == VK_LEFT || vk == 'A') {
+                    btn = UltraCBF::PlayerButton::Left;
+                    isActionKey = true;
+                }
+
+                if (isActionKey) {
+                    UltraCBF::InputType typeEnum = isPress ? UltraCBF::InputType::Press : UltraCBF::InputType::Release;
+                    UltraCBF::SubTickEngine::get().recordHardwareInput(btn, typeEnum, false);
+                }
+            }
+        }
+    }
+    return CallNextHookEx(g_kbdHook, nCode, wParam, lParam);
 }
+
+LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HC_ACTION && UltraCBF::isGameplayActive()) {
+        MSLLHOOKSTRUCT* pMouse = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
+        if (pMouse) {
+            if (wParam == WM_LBUTTONDOWN) {
+                UltraCBF::SubTickEngine::get().recordHardwareInput(UltraCBF::PlayerButton::Jump, UltraCBF::InputType::Press, false);
+            } else if (wParam == WM_LBUTTONUP) {
+                UltraCBF::SubTickEngine::get().recordHardwareInput(UltraCBF::PlayerButton::Jump, UltraCBF::InputType::Release, false);
+            } else if (wParam == WM_RBUTTONDOWN) {
+                UltraCBF::SubTickEngine::get().recordHardwareInput(UltraCBF::PlayerButton::Jump, UltraCBF::InputType::Press, true);
+            } else if (wParam == WM_RBUTTONUP) {
+                UltraCBF::SubTickEngine::get().recordHardwareInput(UltraCBF::PlayerButton::Jump, UltraCBF::InputType::Release, true);
+            }
+        }
+    }
+    return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
+}
+
+void installPlatformInputHooks() {
+    if (!g_kbdHook) {
+        g_kbdHook = SetWindowsHookExA(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandleA(NULL), 0);
+        log::info("[UltraCBF] Low-Level OS Keyboard Hook (WH_KEYBOARD_LL) installed.");
+    }
+    if (!g_mouseHook) {
+        g_mouseHook = SetWindowsHookExA(WH_MOUSE_LL, LowLevelMouseProc, GetModuleHandleA(NULL), 0);
+        log::info("[UltraCBF] Low-Level OS Mouse Hook (WH_MOUSE_LL) installed.");
+    }
+}
+#else
+void installPlatformInputHooks() {
+    log::info("[UltraCBF] High-resolution cross-platform input engine active.");
+}
+#endif
 
 } // namespace UltraCBF
 
@@ -136,6 +207,9 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
             return false;
         }
+
+        // Install low-level Windows OS Hooks (WH_KEYBOARD_LL & WH_MOUSE_LL)
+        UltraCBF::installPlatformInputHooks();
 
         auto& profiler = UltraCBF::SubTickEngine::get().getProfiler();
         if (profiler.isHudVisible()) {
