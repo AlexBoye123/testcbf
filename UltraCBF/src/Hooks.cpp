@@ -26,7 +26,6 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
     };
 
     void handleButton(bool push, int button, bool isPlayer2) {
-        // If we are currently replaying a sub-tick event, call original core handler
         if (m_fields->m_isProcessingSubTick) {
             GJBaseGameLayer::handleButton(push, button, isPlayer2);
             return;
@@ -34,22 +33,19 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
 
         auto& engine = UltraCBF::SubTickEngine::get();
 
-        // If outside active gameplay or engine disabled, pass straight to vanilla GD
         if (!engine.isEnabled() || !UltraCBF::isGameplayActive()) {
             GJBaseGameLayer::handleButton(push, button, isPlayer2);
             return;
         }
 
-        // Auto-Repeat Filter: Prevent Windows key-hold repeat messages from generating 30 CPS spam
         int btnIdx = std::clamp(button, 0, 9);
         int p2Idx = isPlayer2 ? 1 : 0;
 
         if (push == m_fields->m_buttonStates[btnIdx][p2Idx]) {
-            return; // Ignore redundant key-repeat signal
+            return; // Filter duplicate auto-repeat signals
         }
         m_fields->m_buttonStates[btnIdx][p2Idx] = push;
 
-        // Record high-resolution hardware timestamp immediately
         UltraCBF::PlayerButton btnEnum = static_cast<UltraCBF::PlayerButton>(button);
         UltraCBF::InputType typeEnum = push ? UltraCBF::InputType::Press : UltraCBF::InputType::Release;
 
@@ -77,7 +73,6 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
                 float currentAlpha = static_cast<float>(alpha);
                 float deltaAlpha = currentAlpha - lastAlpha;
 
-                // Continuous Sub-Tick Spatial Vector Interpolation
                 if (targetPlayer && deltaAlpha > 0.0f) {
                     cocos2d::CCPoint currentPos = targetPlayer->getPosition();
                     cocos2d::CCPoint velocity = targetPlayer->m_position;
@@ -87,7 +82,6 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
                     lastAlpha = currentAlpha;
                 }
 
-                // Dispatch button event to GD core
                 this->handleButton(isDown, buttonVal, evt.isPlayer2);
             });
 
@@ -108,15 +102,29 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
             return false;
         }
 
+        // Ensure update loop is scheduled
+        this->scheduleUpdate();
+
         auto& profiler = UltraCBF::SubTickEngine::get().getProfiler();
         if (profiler.isHudVisible()) {
-            auto label = CCLabelBMFont::create("UltraCBF Profiler Loading...", "chatFont.fnt");
+            // Use bigFont.fnt which is 100% guaranteed to exist across all GD versions
+            auto label = CCLabelBMFont::create("UltraCBF Profiler Loading...", "bigFont.fnt");
             if (label) {
                 label->setAnchorPoint({0.0f, 1.0f});
-                label->setScale(0.45f);
-                label->setPosition({10.0f, CCDirector::sharedDirector()->getWinSize().height - 10.0f});
-                label->setOpacity(220);
-                this->addChild(label, 9999);
+                label->setAlignment(cocos2d::kCCTextAlignmentLeft);
+                label->setScale(0.35f);
+                label->setOpacity(230);
+                
+                auto winSize = CCDirector::sharedDirector()->getWinSize();
+                label->setPosition({10.0f, winSize.height - 10.0f});
+
+                // Attach to UILayer if available, else PlayLayer directly
+                if (m_uiLayer) {
+                    m_uiLayer->addChild(label, 99999);
+                } else {
+                    this->addChild(label, 99999);
+                }
+
                 m_fields->m_benchmarkLabel = label;
             }
         }
