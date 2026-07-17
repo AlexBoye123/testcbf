@@ -88,14 +88,15 @@ LRESULT CALLBACK CustomWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 }
 
 void installPlatformInputHooks() {
-    auto* director = CCDirector::sharedDirector();
-    if (!director) return;
-    
-    auto* glView = director->getOpenGLView();
-    if (!glView) return;
-
 #if defined(GEODE_IS_WINDOWS)
-    HWND hwnd = glView->getWin32Window();
+    HWND hwnd = wglGetCurrentDC() ? WindowFromDC(wglGetCurrentDC()) : NULL;
+    if (!hwnd) {
+        hwnd = GetActiveWindow();
+    }
+    if (!hwnd) {
+        hwnd = GetForegroundWindow();
+    }
+
     if (hwnd) {
         if (!g_originalWndProc) {
             g_originalWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtr(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(CustomWndProc)));
@@ -115,6 +116,8 @@ void installPlatformInputHooks() {
             log::info("[UltraCBF] Driver-level WM_INPUT devices registered.");
         }
     }
+#else
+    log::info("[UltraCBF] High-resolution cross-platform input engine active.");
 #endif
 }
 #else
