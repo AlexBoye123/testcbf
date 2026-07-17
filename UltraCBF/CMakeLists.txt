@@ -25,4 +25,9 @@ endif()
 
 add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
 
+# Link multimedia timer library on Windows for 1ms high-precision OS scheduling
+if (WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE winmm)
+endif()
+
 setup_geode_mod(${PROJECT_NAME})
