@@ -39,6 +39,7 @@ jobs:
         with:
           combine: true
           target: ${{ matrix.config.target }}
+          path: ./UltraCBF
 
   package:
     name: Package builds
