@@ -26,7 +26,7 @@ class $modify(JFPMenuHook, CreatorLayer) {
 
         auto menu = this->getChildByID("creator-buttons-menu");
         if (!menu) {
-            menu = m_bottomMenu;
+            menu = this->getChildByID("bottom-menu");
         }
 
         if (menu) {
@@ -40,6 +40,8 @@ class $modify(JFPMenuHook, CreatorLayer) {
                 menu->addChild(btn);
                 menu->updateLayout();
             }
+        } else {
+            log::warn("JFP: couldn't find a menu to attach the button to in CreatorLayer");
         }
 
         return true;
