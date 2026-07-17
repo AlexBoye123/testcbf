@@ -1,0 +1,41 @@
+{
+	"geode": "5.8.2",
+	"gd": {
+		"win": "2.2081",
+		"mac": "2.2081",
+		"android": "2.2081",
+		"ios": "2.2081"
+	},
+	"id": "ultra.cbf_nextgen",
+	"version": "v2.0.0",
+	"name": "UltraCBF (Next-Gen Sub-Tick Engine)",
+	"developer": "Agent",
+	"description": "Zero-allocation, lock-free sub-tick input engine with QPC micro-timestamping, real-time hardware benchmarking, and cache-aligned queues for GD 2.2081.",
+	"settings": {
+		"benchmark-overlay": {
+			"name": "Performance & Latency Benchmark HUD",
+			"description": "Displays real-time hardware polling rate (Hz), sub-tick input dispatch latency (µs), jitter, and CPU overhead on PlayLayer.",
+			"type": "bool",
+			"default": true
+		},
+		"polling-mode": {
+			"name": "Hardware Polling Precision",
+			"description": "High-frequency lock-free QPC capture mode for 1000Hz-8000Hz gaming peripherals.",
+			"type": "string",
+			"one-of": ["Zero-Latency QPC (8kHz)", "Balanced RawInput", "Native Sub-Step (240Hz)"],
+			"default": "Zero-Latency QPC (8kHz)"
+		},
+		"deduplication": {
+			"name": "High-Hz Event Deduplication",
+			"description": "Hardware bounce deduplication filter. Set to OFF for Wooting / Hall Effect magnetic switches.",
+			"type": "bool",
+			"default": false
+		},
+		"subtick-extrapolation": {
+			"name": "Micro-Step Extrapolation",
+			"description": "Calculates exact continuous sub-tick displacement vectors at sub-millisecond timestamps.",
+			"type": "bool",
+			"default": true
+		}
+	}
+}
