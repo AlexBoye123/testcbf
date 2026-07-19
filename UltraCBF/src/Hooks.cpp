@@ -11,7 +11,7 @@ bool isGameplayActive() {
     return !playLayer->m_isPaused && playLayer->m_player1 != nullptr;
 }
 
-// Exact decompiled GD 2.2 mode force scaling factor for analytical gravity acceleration
+// Decompiled GD 2.2 mode force scaling factor for analytical gravity acceleration
 float getGamemodeForceScale(PlayerObject* player) {
     if (!player) return 1.0f;
     bool isMini = (player->m_vehicleSize != 1.0f);
@@ -23,6 +23,41 @@ float getGamemodeForceScale(PlayerObject* player) {
     if (player->m_isRobot) return 0.9000f;
 
     return 1.0f;
+}
+
+// Extrapolate player position with ground & slope safety guards
+void extrapolatePlayerPosition(PlayerObject* player, float subTickDt) {
+    if (!player) return;
+
+    // 1. Grounded Safety Guard (Fixes Subtick API Issue #11 - Weak/Reduced Jump Height)
+    // When grounded, ONLY extrapolate horizontal X position. Keep Y locked to platform so m_isOnGround stays true for full jump force!
+    if (player->m_isOnGround) {
+        cocos2d::CCPoint pos = player->getPosition();
+        float vx = player->m_position.x;
+        player->setPosition({pos.x + (vx * subTickDt), pos.y});
+        return;
+    }
+
+    // 2. Slope / D-Block Sliding Safety (Fixes Subtick API Issue #3 - D-Block Slope Glitching)
+    if (player->m_isSliding) {
+        cocos2d::CCPoint pos = player->getPosition();
+        player->setPosition(pos + (player->m_position * subTickDt));
+        return;
+    }
+
+    // 3. Free-Air Continuous Kinematic Extrapolation: s = v*t + 0.5*g*scale*t^2
+    cocos2d::CCPoint pos = player->getPosition();
+    cocos2d::CCPoint vel = player->m_position;
+
+    float gravityTerm = 0.0f;
+    if (!player->m_isDart) { // Wave uses linear constant slope; Gravity modes use quadratic scale
+        float g = player->m_gravity;
+        float forceScale = getGamemodeForceScale(player);
+        gravityTerm = 0.5f * (g * forceScale) * (subTickDt * subTickDt);
+    }
+
+    cocos2d::CCPoint displacement = (vel * subTickDt) + cocos2d::CCPoint{0.0f, gravityTerm};
+    player->setPosition(pos + displacement);
 }
 
 void installPlatformInputHooks() {
@@ -99,36 +134,14 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
                     if (deltaAlpha > 0.0f) {
                         float subTickDt = dt * deltaAlpha;
 
-                        // Player 1 Decompiled Kinematic Displacement Vector (s = v*t + 0.5*g*scale*t^2)
+                        // Continuous Kinematic Extrapolation for Player 1
                         if (m_player1) {
-                            cocos2d::CCPoint pos1 = m_player1->getPosition();
-                            cocos2d::CCPoint vel1 = m_player1->m_position;
-
-                            float gravityTerm1 = 0.0f;
-                            if (!m_player1->m_isDart) { // Wave uses linear constant velocity; Gravity modes use quadratic scale
-                                float g1 = m_player1->m_gravity;
-                                float forceScale1 = UltraCBF::getGamemodeForceScale(m_player1);
-                                gravityTerm1 = 0.5f * (g1 * forceScale1) * (subTickDt * subTickDt);
-                            }
-
-                            cocos2d::CCPoint disp1 = (vel1 * subTickDt) + cocos2d::CCPoint{0.0f, gravityTerm1};
-                            m_player1->setPosition(pos1 + disp1);
+                            UltraCBF::extrapolatePlayerPosition(m_player1, subTickDt);
                         }
 
-                        // Player 2 Synchronous Dual Lockstep Kinematic Extrapolation
+                        // Synchronous Dual Lockstep Extrapolation for Player 2
                         if (isDualActive && m_player2) {
-                            cocos2d::CCPoint pos2 = m_player2->getPosition();
-                            cocos2d::CCPoint vel2 = m_player2->m_position;
-
-                            float gravityTerm2 = 0.0f;
-                            if (!m_player2->m_isDart) {
-                                float g2 = m_player2->m_gravity;
-                                float forceScale2 = UltraCBF::getGamemodeForceScale(m_player2);
-                                gravityTerm2 = 0.5f * (g2 * forceScale2) * (subTickDt * subTickDt);
-                            }
-
-                            cocos2d::CCPoint disp2 = (vel2 * subTickDt) + cocos2d::CCPoint{0.0f, gravityTerm2};
-                            m_player2->setPosition(pos2 + disp2);
+                            UltraCBF::extrapolatePlayerPosition(m_player2, subTickDt);
                         }
 
                         lastAlpha = currentAlpha;
