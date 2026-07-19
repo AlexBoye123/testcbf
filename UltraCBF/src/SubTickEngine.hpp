@@ -22,6 +22,7 @@ private:
     // Sub-Tick Execution Flags
     bool m_enabled{true};
     bool m_deduplicationEnabled{false}; // Disabled by default for Wooting / Hall Effect magnetic switch keyboards
+    bool m_isReplayingSubTick{false};   // Re-entrancy flag to prevent infinite event loop recursion
     uint64_t m_lastProcessedPressQPC{0};
 
     SubTickEngine();
@@ -56,6 +57,8 @@ public:
     
     bool isDeduplicationEnabled() const { return m_deduplicationEnabled; }
     void setDeduplicationEnabled(bool state) { m_deduplicationEnabled = state; }
+
+    bool isReplayingSubTick() const { return m_isReplayingSubTick; }
 
     PerformanceProfiler<128>& getProfiler() { return m_profiler; }
 };
