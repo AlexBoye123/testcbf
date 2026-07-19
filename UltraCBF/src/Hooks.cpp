@@ -40,16 +40,6 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
         uint64_t m_lastPassThroughPressQPC{0}; // Real-time timestamp tracking for Pass-Through mode
     };
 
-    void resetLevel() {
-        GJBaseGameLayer::resetLevel();
-
-        for (int b = 0; b < 10; ++b) {
-            m_fields->m_buttonStates[b][0] = false;
-            m_fields->m_buttonStates[b][1] = false;
-        }
-        m_fields->m_lastPassThroughPressQPC = 0;
-    }
-
     void handleButton(bool push, int button, bool isPlayer2) {
         if (m_fields->m_isProcessingSubTick) {
             GJBaseGameLayer::handleButton(push, button, isPlayer2);
