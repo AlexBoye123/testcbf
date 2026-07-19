@@ -7,6 +7,7 @@
 #include <timeapi.h>
 
 typedef NTSTATUS(NTAPI* pfnNtSetTimerResolution)(ULONG DesiredResolution, BOOLEAN SetResolution, PULONG ActualResolution);
+typedef BOOL (WINAPI * PFNWGLSWAPINTERVALEXTPROC) (int interval);
 #endif
 
 using namespace geode::prelude;
@@ -33,7 +34,14 @@ $on_mod(Loaded) {
         }
     }
 
-    // 3. Elevate current thread priority to ensure zero-latency context switching
+    // 3. Force OpenGL Zero-Backbuffer Immediate Swap (Disables GPU frame buffer queue latency)
+    auto wglSwapIntervalEXT = reinterpret_cast<PFNWGLSWAPINTERVALEXTPROC>(wglGetProcAddress("wglSwapIntervalEXT"));
+    if (wglSwapIntervalEXT) {
+        wglSwapIntervalEXT(0);
+        log::info("[UltraCBF] OpenGL Zero-Backbuffer wglSwapIntervalEXT(0) engaged.");
+    }
+
+    // 4. Elevate current thread priority to ensure zero-latency context switching
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
     log::info("[UltraCBF] Windows high-precision kernel timers & highest thread priority engaged.");
 #endif
