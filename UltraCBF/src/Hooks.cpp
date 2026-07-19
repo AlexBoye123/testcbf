@@ -1,10 +1,6 @@
 #include "Hooks.hpp"
 #include "SubTickEngine.hpp"
 
-#ifdef GEODE_IS_WINDOWS
-#include <windows.h>
-#endif
-
 using namespace geode::prelude;
 
 namespace UltraCBF {
@@ -15,76 +11,23 @@ bool isGameplayActive() {
     return !playLayer->m_isPaused && playLayer->m_player1 != nullptr;
 }
 
-#ifdef GEODE_IS_WINDOWS
-static HHOOK g_kbdHook = NULL;
-static HHOOK g_mouseHook = NULL;
+// Exact decompiled GD 2.2 mode force scaling factor for analytical gravity acceleration
+float getGamemodeForceScale(PlayerObject* player) {
+    if (!player) return 1.0f;
+    bool isMini = (player->m_vehicleSize != 1.0f);
 
-LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode == HC_ACTION && UltraCBF::isGameplayActive()) {
-        KBDLLHOOKSTRUCT* pKbd = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
-        if (pKbd) {
-            bool isPress = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
-            bool isRelease = (wParam == WM_KEYUP || wParam == WM_SYSKEYUP);
+    if (player->m_isShip)  return isMini ? 0.5875f : 0.4700f;
+    if (player->m_isBird)  return isMini ? 0.7250f : 0.5800f; // UFO
+    if (player->m_isSwing) return isMini ? 0.6154f : 0.4000f;
+    if (player->m_isBall || player->m_isSpider) return 0.6000f;
+    if (player->m_isRobot) return 0.9000f;
 
-            if (isPress || isRelease) {
-                DWORD vk = pKbd->vkCode;
-                UltraCBF::PlayerButton btn = UltraCBF::PlayerButton::Jump;
-                bool isActionKey = false;
-
-                if (vk == VK_SPACE || vk == VK_UP || vk == 'W') {
-                    btn = UltraCBF::PlayerButton::Jump;
-                    isActionKey = true;
-                } else if (vk == VK_RIGHT || vk == 'D') {
-                    btn = UltraCBF::PlayerButton::Right;
-                    isActionKey = true;
-                } else if (vk == VK_LEFT || vk == 'A') {
-                    btn = UltraCBF::PlayerButton::Left;
-                    isActionKey = true;
-                }
-
-                if (isActionKey) {
-                    UltraCBF::InputType typeEnum = isPress ? UltraCBF::InputType::Press : UltraCBF::InputType::Release;
-                    UltraCBF::SubTickEngine::get().recordHardwareInput(btn, typeEnum, false);
-                }
-            }
-        }
-    }
-    return CallNextHookEx(g_kbdHook, nCode, wParam, lParam);
-}
-
-LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode == HC_ACTION && UltraCBF::isGameplayActive()) {
-        MSLLHOOKSTRUCT* pMouse = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
-        if (pMouse) {
-            if (wParam == WM_LBUTTONDOWN) {
-                UltraCBF::SubTickEngine::get().recordHardwareInput(UltraCBF::PlayerButton::Jump, UltraCBF::InputType::Press, false);
-            } else if (wParam == WM_LBUTTONUP) {
-                UltraCBF::SubTickEngine::get().recordHardwareInput(UltraCBF::PlayerButton::Jump, UltraCBF::InputType::Release, false);
-            } else if (wParam == WM_RBUTTONDOWN) {
-                UltraCBF::SubTickEngine::get().recordHardwareInput(UltraCBF::PlayerButton::Jump, UltraCBF::InputType::Press, true);
-            } else if (wParam == WM_RBUTTONUP) {
-                UltraCBF::SubTickEngine::get().recordHardwareInput(UltraCBF::PlayerButton::Jump, UltraCBF::InputType::Release, true);
-            }
-        }
-    }
-    return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
+    return 1.0f;
 }
 
 void installPlatformInputHooks() {
-    if (!g_kbdHook) {
-        g_kbdHook = SetWindowsHookExA(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandleA(NULL), 0);
-        log::info("[UltraCBF] Low-Level OS Keyboard Hook (WH_KEYBOARD_LL) installed.");
-    }
-    if (!g_mouseHook) {
-        g_mouseHook = SetWindowsHookExA(WH_MOUSE_LL, LowLevelMouseProc, GetModuleHandleA(NULL), 0);
-        log::info("[UltraCBF] Low-Level OS Mouse Hook (WH_MOUSE_LL) installed.");
-    }
+    log::info("[UltraCBF] Sub-tick engine hooked directly to Geode input dispatcher.");
 }
-#else
-void installPlatformInputHooks() {
-    log::info("[UltraCBF] High-resolution cross-platform input engine active.");
-}
-#endif
 
 } // namespace UltraCBF
 
@@ -96,6 +39,16 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
         bool m_isProcessingSubTick{false};     // Re-entrancy guard during sub-tick replay
         uint64_t m_lastPassThroughPressQPC{0}; // Real-time timestamp tracking for Pass-Through mode
     };
+
+    void resetLevel() {
+        GJBaseGameLayer::resetLevel();
+
+        for (int b = 0; b < 10; ++b) {
+            m_fields->m_buttonStates[b][0] = false;
+            m_fields->m_buttonStates[b][1] = false;
+        }
+        m_fields->m_lastPassThroughPressQPC = 0;
+    }
 
     void handleButton(bool push, int button, bool isPlayer2) {
         if (m_fields->m_isProcessingSubTick) {
@@ -156,18 +109,36 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
                     if (deltaAlpha > 0.0f) {
                         float subTickDt = dt * deltaAlpha;
 
-                        // Continuous Position Extrapolation for Player 1
+                        // Player 1 Decompiled Kinematic Displacement Vector (s = v*t + 0.5*g*scale*t^2)
                         if (m_player1) {
                             cocos2d::CCPoint pos1 = m_player1->getPosition();
                             cocos2d::CCPoint vel1 = m_player1->m_position;
-                            m_player1->setPosition(pos1 + (vel1 * subTickDt));
+
+                            float gravityTerm1 = 0.0f;
+                            if (!m_player1->m_isDart) { // Wave uses linear constant velocity; Gravity modes use quadratic scale
+                                float g1 = m_player1->m_gravity;
+                                float forceScale1 = UltraCBF::getGamemodeForceScale(m_player1);
+                                gravityTerm1 = 0.5f * (g1 * forceScale1) * (subTickDt * subTickDt);
+                            }
+
+                            cocos2d::CCPoint disp1 = (vel1 * subTickDt) + cocos2d::CCPoint{0.0f, gravityTerm1};
+                            m_player1->setPosition(pos1 + disp1);
                         }
 
-                        // Synchronous Lockstep Position Extrapolation for Player 2 (Keeps dual ships/cubes 100% aligned in X space)
+                        // Player 2 Synchronous Dual Lockstep Kinematic Extrapolation
                         if (isDualActive && m_player2) {
                             cocos2d::CCPoint pos2 = m_player2->getPosition();
                             cocos2d::CCPoint vel2 = m_player2->m_position;
-                            m_player2->setPosition(pos2 + (vel2 * subTickDt));
+
+                            float gravityTerm2 = 0.0f;
+                            if (!m_player2->m_isDart) {
+                                float g2 = m_player2->m_gravity;
+                                float forceScale2 = UltraCBF::getGamemodeForceScale(m_player2);
+                                gravityTerm2 = 0.5f * (g2 * forceScale2) * (subTickDt * subTickDt);
+                            }
+
+                            cocos2d::CCPoint disp2 = (vel2 * subTickDt) + cocos2d::CCPoint{0.0f, gravityTerm2};
+                            m_player2->setPosition(pos2 + disp2);
                         }
 
                         lastAlpha = currentAlpha;
@@ -208,9 +179,6 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
             return false;
         }
 
-        // Install low-level Windows OS Hooks (WH_KEYBOARD_LL & WH_MOUSE_LL)
-        UltraCBF::installPlatformInputHooks();
-
         auto& profiler = UltraCBF::SubTickEngine::get().getProfiler();
         if (profiler.isHudVisible()) {
             auto label = CCLabelBMFont::create("UltraCBF Telemetry Initializing...", "bigFont.fnt");
@@ -238,7 +206,6 @@ class $modify(UltraPlayLayerHook, PlayLayer) {
 
     void resetLevel() {
         PlayLayer::resetLevel();
-        // Reset sub-tick state queues on practice checkpoint reset / level restart
         UltraCBF::SubTickEngine::get().init();
     }
 
