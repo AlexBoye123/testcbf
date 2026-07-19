@@ -27,12 +27,13 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
     };
 
     void handleButton(bool push, int button, bool isPlayer2) {
-        if (m_fields->m_isProcessingSubTick) {
+        auto& engine = UltraCBF::SubTickEngine::get();
+
+        // Re-entrancy Guard: If engine is currently replaying a sub-tick event, execute native GD core jump
+        if (engine.isReplayingSubTick() || m_fields->m_isProcessingSubTick) {
             GJBaseGameLayer::handleButton(push, button, isPlayer2);
             return;
         }
-
-        auto& engine = UltraCBF::SubTickEngine::get();
 
         // Pass-Through Mode: Record physical key press time for Vanilla step latency comparison
         if (!engine.isEnabled()) {
