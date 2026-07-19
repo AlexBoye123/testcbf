@@ -26,6 +26,7 @@ void SubTickEngine::init() {
     m_previousFrameStartQPC = now;
     m_currentFrameStartQPC = now;
     m_isReplayingSubTick = false;
+    m_inputQueue.clear();
 }
 
 uint64_t SubTickEngine::getCurrentQPC() const noexcept {
@@ -61,9 +62,9 @@ void SubTickEngine::recordHardwareInput(PlayerButton button, InputType type, boo
         .rawDeviceId = 0
     };
 
-    m_ringBuffer.push(evt);
+    m_inputQueue.push(evt);
 
-    // Measure C++ Lock-Free Queue Ingestion Delay (Catch Time)
+    // Measure C++ Contiguous Queue Ingestion Delay (Catch Time)
     uint64_t catchQPC = getCurrentQPC();
     double catchMicros = static_cast<double>(catchQPC - nowQPC) * m_secondsPerQpcTick * 1000000.0;
     m_profiler.recordInputCatch(catchMicros);
@@ -108,8 +109,7 @@ void SubTickEngine::processPendingSubTicks(std::function<void(const TimestampedI
 
     m_isReplayingSubTick = true; // Set re-entrancy flag to notify handleButton
 
-    TimestampedInput evt;
-    while (m_ringBuffer.pop(evt)) {
+    m_inputQueue.drain([this, &dispatchCallback](const TimestampedInput& evt) {
         double alpha = calculateSubTickPhase(evt.qpcTimestamp);
 
         // Measure Total Input-to-Step Dispatch Latency in Microseconds
@@ -118,7 +118,7 @@ void SubTickEngine::processPendingSubTicks(std::function<void(const TimestampedI
         m_profiler.recordInputLatency(latencyMicros, alpha, evt.qpcTimestamp, dispatchQPC, m_qpcFrequency);
 
         dispatchCallback(evt, alpha);
-    }
+    });
 
     m_isReplayingSubTick = false; // Reset flag after draining queue
 
