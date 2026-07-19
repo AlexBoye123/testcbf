@@ -10,7 +10,7 @@ namespace UltraCBF {
 
 class SubTickEngine {
 private:
-    LockFreeInputBuffer<512> m_ringBuffer;
+    SingleThreadInputQueue m_inputQueue;
     PerformanceProfiler<128> m_profiler;
     
     // Hardware Clock Calibration Data
@@ -36,7 +36,7 @@ public:
     // Initialize high-resolution timer frequency & OS hooks
     void init();
 
-    // Record high-precision raw hardware input event from OS thread
+    // Record high-precision raw hardware input event from main thread
     void recordHardwareInput(PlayerButton button, InputType type, bool isPlayer2);
 
     // Set frame boundaries at the beginning of GD step update
