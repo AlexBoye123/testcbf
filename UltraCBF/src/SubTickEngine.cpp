@@ -25,6 +25,7 @@ void SubTickEngine::init() {
     uint64_t now = getCurrentQPC();
     m_previousFrameStartQPC = now;
     m_currentFrameStartQPC = now;
+    m_isReplayingSubTick = false;
 }
 
 uint64_t SubTickEngine::getCurrentQPC() const noexcept {
@@ -105,6 +106,8 @@ double SubTickEngine::calculateSubTickPhase(uint64_t qpcTimestamp) const noexcep
 void SubTickEngine::processPendingSubTicks(std::function<void(const TimestampedInput&, double alpha)> dispatchCallback) {
     uint64_t startTimeQPC = getCurrentQPC();
 
+    m_isReplayingSubTick = true; // Set re-entrancy flag to notify handleButton
+
     TimestampedInput evt;
     while (m_ringBuffer.pop(evt)) {
         double alpha = calculateSubTickPhase(evt.qpcTimestamp);
@@ -116,6 +119,8 @@ void SubTickEngine::processPendingSubTicks(std::function<void(const TimestampedI
 
         dispatchCallback(evt, alpha);
     }
+
+    m_isReplayingSubTick = false; // Reset flag after draining queue
 
     uint64_t endTimeQPC = getCurrentQPC();
     double cpuMicros = static_cast<double>(endTimeQPC - startTimeQPC) * m_secondsPerQpcTick * 1000000.0;
