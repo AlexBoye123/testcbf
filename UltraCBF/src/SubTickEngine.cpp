@@ -26,7 +26,8 @@ void SubTickEngine::init() {
     m_previousFrameStartQPC = now;
     m_currentFrameStartQPC = now;
     m_isReplayingSubTick = false;
-    m_inputQueue.clear();
+    m_queueP1.clear();
+    m_queueP2.clear();
 }
 
 uint64_t SubTickEngine::getCurrentQPC() const noexcept {
@@ -62,9 +63,14 @@ void SubTickEngine::recordHardwareInput(PlayerButton button, InputType type, boo
         .rawDeviceId = 0
     };
 
-    m_inputQueue.push(evt);
+    // Push to isolated per-player queue (Fixes Dual Mode queue drainage bug)
+    if (isPlayer2) {
+        m_queueP2.push(evt);
+    } else {
+        m_queueP1.push(evt);
+    }
 
-    // Measure C++ Contiguous Queue Ingestion Delay (Catch Time)
+    // Measure C++ Queue Ingestion Delay (Catch Time)
     uint64_t catchQPC = getCurrentQPC();
     double catchMicros = static_cast<double>(catchQPC - nowQPC) * m_secondsPerQpcTick * 1000000.0;
     m_profiler.recordInputCatch(catchMicros);
@@ -104,12 +110,14 @@ double SubTickEngine::calculateSubTickPhase(uint64_t qpcTimestamp) const noexcep
     return alpha;
 }
 
-void SubTickEngine::processPendingSubTicks(std::function<void(const TimestampedInput&, double alpha)> dispatchCallback) {
+void SubTickEngine::processPendingSubTicksForPlayer(bool isPlayer2, std::function<void(const TimestampedInput&, double alpha)> dispatchCallback) {
     uint64_t startTimeQPC = getCurrentQPC();
 
     m_isReplayingSubTick = true; // Set re-entrancy flag to notify handleButton
 
-    m_inputQueue.drain([this, &dispatchCallback](const TimestampedInput& evt) {
+    auto& activeQueue = isPlayer2 ? m_queueP2 : m_queueP1;
+
+    activeQueue.drain([this, &dispatchCallback](const TimestampedInput& evt) {
         double alpha = calculateSubTickPhase(evt.qpcTimestamp);
 
         // Measure Total Input-to-Step Dispatch Latency in Microseconds
