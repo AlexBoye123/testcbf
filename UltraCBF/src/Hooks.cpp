@@ -11,60 +11,6 @@ bool isGameplayActive() {
     return !playLayer->m_isPaused && playLayer->m_player1 != nullptr;
 }
 
-// Decompiled GD 2.2 mode force scaling factor for analytical gravity acceleration
-float getGamemodeForceScale(PlayerObject* player) {
-    if (!player) return 1.0f;
-    bool isMini = (player->m_vehicleSize != 1.0f);
-
-    if (player->m_isShip)  return isMini ? 0.5875f : 0.4700f;
-    if (player->m_isBird)  return isMini ? 0.7250f : 0.5800f; // UFO
-    if (player->m_isSwing) return isMini ? 0.6154f : 0.4000f;
-    if (player->m_isBall || player->m_isSpider) return 0.6000f;
-    if (player->m_isRobot) return 0.9000f;
-
-    return 1.0f;
-}
-
-// Extrapolate player position using true velocity vector and analytical gravity scaling
-void extrapolatePlayerPosition(PlayerObject* player, float subTickDt) {
-    if (!player) return;
-
-    // Retrieve true horizontal and vertical velocity vectors
-    float vx = player->m_isPlatformer ? static_cast<float>(player->m_platformerXVelocity) : static_cast<float>(player->getCurrentXVelocity());
-    float vy = static_cast<float>(player->m_yVelocity);
-
-    // 1. Grounded Safety Guard (Fixes Subtick API Issue #11 - Weak/Reduced Jump Height)
-    if (player->m_isOnGround) {
-        cocos2d::CCPoint pos = player->getPosition();
-        player->setPosition({pos.x + (vx * subTickDt), pos.y});
-        return;
-    }
-
-    // 2. Slope / D-Block Sliding Safety Guard (Fixes Subtick API Issue #3 - D-Block Slope Glitching)
-    if (player->m_isSliding) {
-        cocos2d::CCPoint pos = player->getPosition();
-        player->setPosition({pos.x + (vx * subTickDt), pos.y + (vy * subTickDt)});
-        return;
-    }
-
-    // 3. Free-Air Continuous Kinematic Extrapolation: s = v*t + 0.5*g*scale*t^2
-    cocos2d::CCPoint pos = player->getPosition();
-
-    float gravityTerm = 0.0f;
-    if (!player->m_isDart) { // Wave uses linear constant slope; Gravity modes use quadratic scale
-        float g = player->m_gravity;
-        float forceScale = getGamemodeForceScale(player);
-        gravityTerm = 0.5f * (g * forceScale) * (subTickDt * subTickDt);
-    }
-
-    cocos2d::CCPoint displacement{
-        vx * subTickDt,
-        (vy * subTickDt) + gravityTerm
-    };
-
-    player->setPosition(pos + displacement);
-}
-
 void installPlatformInputHooks() {
     log::info("[UltraCBF] Sub-tick engine hooked directly to Geode PlayerObject & GameLayer dispatchers.");
 }
@@ -78,16 +24,6 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
         bool m_buttonStates[10][2]{{false}};   // Tracks button press state [buttonID][isPlayer2]
         uint64_t m_lastPassThroughPressQPC{0}; // Real-time timestamp tracking for Pass-Through mode
     };
-
-    void resetLevel() {
-        GJBaseGameLayer::resetLevel();
-
-        for (int b = 0; b < 10; ++b) {
-            m_fields->m_buttonStates[b][0] = false;
-            m_fields->m_buttonStates[b][1] = false;
-        }
-        m_fields->m_lastPassThroughPressQPC = 0;
-    }
 
     void handleButton(bool push, int button, bool isPlayer2) {
         auto& engine = UltraCBF::SubTickEngine::get();
@@ -184,13 +120,9 @@ class $modify(UltraPlayerObjectHook, PlayerObject) {
             if (deltaAlpha > 0.0f) {
                 float subTickDt = dt * deltaAlpha;
 
-                // For Wave Mode (m_isDart): Exact linear tick-splitting is 100% exact
-                if (this->m_isDart) {
-                    PlayerObject::update(subTickDt);
-                } else {
-                    // For Gravity Modes: Use analytical continuous kinematic vector extrapolation (0.5 * g * scale * t^2)
-                    UltraCBF::extrapolatePlayerPosition(this, subTickDt);
-                }
+                // Run native PlayerObject update step for sub-tick fraction.
+                // Guarantees all native collision, orb, hazard, portal, and slope checks execute during the sub-step!
+                PlayerObject::update(subTickDt);
 
                 lastAlpha = currentAlpha;
             }
@@ -201,7 +133,7 @@ class $modify(UltraPlayerObjectHook, PlayerObject) {
             playLayer->handleButton(isDown, buttonVal, isPlayer2);
         });
 
-        // Execute remaining step fraction through physics engine
+        // Execute remaining step fraction through native physics loop
         float remainingAlpha = 1.0f - lastAlpha;
         if (remainingAlpha > 0.0f) {
             PlayerObject::update(dt * remainingAlpha);
