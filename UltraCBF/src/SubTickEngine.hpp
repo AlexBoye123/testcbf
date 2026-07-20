@@ -10,7 +10,8 @@ namespace UltraCBF {
 
 class SubTickEngine {
 private:
-    SingleThreadInputQueue m_inputQueue;
+    SingleThreadInputQueue m_queueP1; // Dedicated input queue for Player 1
+    SingleThreadInputQueue m_queueP2; // Dedicated input queue for Player 2
     PerformanceProfiler<128> m_profiler;
     
     // Hardware Clock Calibration Data
@@ -45,8 +46,8 @@ public:
     // Compute exact continuous sub-tick phase [0.0, 1.0] for a raw input timestamp
     double calculateSubTickPhase(uint64_t qpcTimestamp) const noexcept;
 
-    // Drain lock-free buffer and invoke callback with calculated fractional phase alpha
-    void processPendingSubTicks(std::function<void(const TimestampedInput&, double alpha)> dispatchCallback);
+    // Drain specific player queue and invoke callback with calculated fractional phase alpha
+    void processPendingSubTicksForPlayer(bool isPlayer2, std::function<void(const TimestampedInput&, double alpha)> dispatchCallback);
 
     // Utility clock queries
     uint64_t getCurrentQPC() const noexcept;
