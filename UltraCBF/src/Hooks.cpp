@@ -29,6 +29,7 @@ float getGamemodeForceScale(PlayerObject* player) {
 void extrapolatePlayerPosition(PlayerObject* player, float subTickDt) {
     if (!player) return;
 
+    // Retrieve true horizontal and vertical velocity vectors
     float vx = player->m_isPlatformer ? static_cast<float>(player->m_platformerXVelocity) : static_cast<float>(player->getCurrentXVelocity());
     float vy = static_cast<float>(player->m_yVelocity);
 
@@ -71,18 +72,14 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
         uint64_t m_lastPassThroughPressQPC{0}; // Real-time timestamp tracking for Pass-Through mode
     };
 
-    void resetLevel() {
-        GJBaseGameLayer::resetLevel();
-
-        for (int b = 0; b < 10; ++b) {
-            m_fields->m_buttonStates[b][0] = false;
-            m_fields->m_buttonStates[b][1] = false;
-        }
-        m_fields->m_lastPassThroughPressQPC = 0;
-    }
-
     void handleButton(bool push, int button, bool isPlayer2) {
         auto& engine = UltraCBF::SubTickEngine::get();
+
+        // Re-entrancy Guard: If engine is currently replaying a sub-tick event, execute native GD core jump
+        if (engine.isReplayingSubTick()) {
+            GJBaseGameLayer::handleButton(push, button, isPlayer2);
+            return;
+        }
 
         // Pass-Through Mode: Record physical key press time for Vanilla step latency comparison
         if (!engine.isEnabled()) {
@@ -101,15 +98,14 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
         int btnIdx = std::clamp(button, 0, 9);
         int p2Idx = isPlayer2 ? 1 : 0;
 
-        // Auto-Repeat Filter: Prevent OS auto-repeat signals while key is held down
         if (push == m_fields->m_buttonStates[btnIdx][p2Idx]) {
-            return;
+            return; // Filter duplicate OS auto-repeat signals
         }
         m_fields->m_buttonStates[btnIdx][p2Idx] = push;
 
-        // Record high-resolution microsecond timestamp immediately
         UltraCBF::PlayerButton btnEnum = static_cast<UltraCBF::PlayerButton>(button);
         UltraCBF::InputType typeEnum = push ? UltraCBF::InputType::Press : UltraCBF::InputType::Release;
+
         engine.recordHardwareInput(btnEnum, typeEnum, isPlayer2);
 
         // Execute core GD jump force immediately so player action registers with zero delay
@@ -128,8 +124,15 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
 
                 bool isDualActive = m_gameState.m_isDualMode && m_player2 != nullptr;
 
-                // Process Player 1 Sub-Ticks for spatial vector extrapolation
+                // Process Player 1 Sub-Ticks
                 engine.processPendingSubTicksForPlayer(false, [this, dt, &lastAlphaP1](const UltraCBF::TimestampedInput& evt, double alpha) {
+                    bool isDown = (evt.type == UltraCBF::InputType::Press);
+                    int buttonVal = static_cast<int>(evt.button);
+
+                    // Step 1: Dispatch button state change FIRST so jump force & velocity update
+                    this->handleButton(isDown, buttonVal, false);
+
+                    // Step 2: Extrapolate spatial position using the new jump velocity
                     float currentAlpha = static_cast<float>(alpha);
                     float deltaAlpha = currentAlpha - lastAlphaP1;
 
@@ -143,6 +146,11 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
                 // Process Player 2 Sub-Ticks (Dual Mode)
                 if (isDualActive && m_player2) {
                     engine.processPendingSubTicksForPlayer(true, [this, dt, &lastAlphaP2](const UltraCBF::TimestampedInput& evt, double alpha) {
+                        bool isDown = (evt.type == UltraCBF::InputType::Press);
+                        int buttonVal = static_cast<int>(evt.button);
+
+                        this->handleButton(isDown, buttonVal, true);
+
                         float currentAlpha = static_cast<float>(alpha);
                         float deltaAlpha = currentAlpha - lastAlphaP2;
 
