@@ -11,53 +11,6 @@ bool isGameplayActive() {
     return !playLayer->m_isPaused && playLayer->m_player1 != nullptr;
 }
 
-// Decompiled GD 2.2 mode force scaling factor for analytical gravity acceleration
-float getGamemodeForceScale(PlayerObject* player) {
-    if (!player) return 1.0f;
-    bool isMini = (player->m_vehicleSize != 1.0f);
-
-    if (player->m_isShip)  return isMini ? 0.5875f : 0.4700f;
-    if (player->m_isBird)  return isMini ? 0.7250f : 0.5800f; // UFO
-    if (player->m_isSwing) return isMini ? 0.6154f : 0.4000f;
-    if (player->m_isBall || player->m_isSpider) return 0.6000f;
-    if (player->m_isRobot) return 0.9000f;
-
-    return 1.0f;
-}
-
-// Extrapolate player position using true velocity vectors (Vx from getCurrentXVelocity, Vy from m_yVelocity)
-void extrapolatePlayerPosition(PlayerObject* player, float subTickDt) {
-    if (!player) return;
-
-    // Retrieve true horizontal and vertical velocity vectors
-    float vx = player->m_isPlatformer ? static_cast<float>(player->m_platformerXVelocity) : static_cast<float>(player->getCurrentXVelocity());
-    float vy = static_cast<float>(player->m_yVelocity);
-
-    // 1. Slope / D-Block Sliding Safety Guard
-    if (player->m_isSliding) {
-        cocos2d::CCPoint pos = player->getPosition();
-        player->setPosition({pos.x + (vx * subTickDt), pos.y + (vy * subTickDt)});
-        return;
-    }
-
-    // 2. Free-Air Continuous Kinematic Extrapolation: s = v*t + 0.5*g*scale*t^2
-    cocos2d::CCPoint pos = player->getPosition();
-
-    float gravityTerm = 0.0f;
-    if (!player->m_isDart) { // Wave uses linear constant slope; Gravity modes use quadratic scale
-        float g = player->m_gravity;
-        float forceScale = getGamemodeForceScale(player);
-        gravityTerm = 0.5f * (g * forceScale) * (subTickDt * subTickDt);
-    }
-
-    cocos2d::CCPoint displacement{
-        vx * subTickDt,
-        (vy * subTickDt) + gravityTerm
-    };
-
-    player->setPosition(pos + displacement);
-}
-
 void installPlatformInputHooks() {
     log::info("[UltraCBF] Sub-tick engine hooked directly to Geode input dispatcher.");
 }
@@ -70,6 +23,7 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
     struct Fields {
         bool m_buttonStates[10][2]{{false}};   // Tracks button press state [buttonID][isPlayer2]
         uint64_t m_lastPassThroughPressQPC{0}; // Real-time timestamp tracking for Pass-Through mode
+        bool m_isReplayingSubTickStep{false};
     };
 
     void resetLevel() {
@@ -80,10 +34,17 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
             m_fields->m_buttonStates[b][1] = false;
         }
         m_fields->m_lastPassThroughPressQPC = 0;
+        m_fields->m_isReplayingSubTickStep = false;
     }
 
     void handleButton(bool push, int button, bool isPlayer2) {
         auto& engine = UltraCBF::SubTickEngine::get();
+
+        // If we are currently executing a sub-tick replay step, invoke core GD button handler directly
+        if (engine.isReplayingSubTick() || m_fields->m_isReplayingSubTickStep) {
+            GJBaseGameLayer::handleButton(push, button, isPlayer2);
+            return;
+        }
 
         // Pass-Through Mode: Record physical key press time for Vanilla step latency comparison
         if (!engine.isEnabled()) {
@@ -102,80 +63,87 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
         int btnIdx = std::clamp(button, 0, 9);
         int p2Idx = isPlayer2 ? 1 : 0;
 
+        // Auto-Repeat Filter: Prevent duplicate OS key-hold messages
         if (push == m_fields->m_buttonStates[btnIdx][p2Idx]) {
-            return; // Filter duplicate OS auto-repeat signals
+            return;
         }
         m_fields->m_buttonStates[btnIdx][p2Idx] = push;
 
         UltraCBF::PlayerButton btnEnum = static_cast<UltraCBF::PlayerButton>(button);
         UltraCBF::InputType typeEnum = push ? UltraCBF::InputType::Press : UltraCBF::InputType::Release;
 
+        // Enqueue event with high-resolution QPC hardware timestamp for sub-tick execution
         engine.recordHardwareInput(btnEnum, typeEnum, isPlayer2);
-
-        // Execute core GD jump force immediately so player action registers with zero delay
-        GJBaseGameLayer::handleButton(push, button, isPlayer2);
     }
 
     void update(float dt) {
         auto& engine = UltraCBF::SubTickEngine::get();
 
         if (UltraCBF::isGameplayActive()) {
-            // ALWAYS update frame step boundary calibration so alpha phase calculation is active in both modes
-            engine.beginFrameStep(static_cast<double>(dt));
-
             if (engine.isEnabled()) {
+                engine.beginFrameStep(static_cast<double>(dt));
+
                 float lastAlphaP1 = 0.0f;
                 float lastAlphaP2 = 0.0f;
 
                 bool isDualActive = m_gameState.m_isDualMode && m_player2 != nullptr;
 
-                // Process Player 1 Sub-Ticks
+                m_fields->m_isReplayingSubTickStep = true;
+
+                // Process Player 1 Sub-Ticks: Advance player physics by exact fractional deltas
                 engine.processPendingSubTicksForPlayer(false, [this, dt, &lastAlphaP1](const UltraCBF::TimestampedInput& evt, double alpha) {
-                    bool isDown = (evt.type == UltraCBF::InputType::Press);
-                    int buttonVal = static_cast<int>(evt.button);
-
-                    // Step 1: Dispatch button state change FIRST so jump force & velocity update
-                    this->handleButton(isDown, buttonVal, false);
-
-                    // Step 2: Extrapolate spatial position using the new jump velocity
                     float currentAlpha = static_cast<float>(alpha);
                     float deltaAlpha = currentAlpha - lastAlphaP1;
 
                     if (m_player1 && deltaAlpha > 0.0f) {
                         float subTickDt = dt * deltaAlpha;
-                        UltraCBF::extrapolatePlayerPosition(m_player1, subTickDt);
+                        m_player1->update(subTickDt);
                         lastAlphaP1 = currentAlpha;
                     }
+
+                    bool isDown = (evt.type == UltraCBF::InputType::Press);
+                    int buttonVal = static_cast<int>(evt.button);
+                    this->handleButton(isDown, buttonVal, false);
                 });
+
+                // Complete remaining step fraction for Player 1
+                float remainingP1 = 1.0f - lastAlphaP1;
+                if (m_player1 && remainingP1 > 0.0f) {
+                    m_player1->update(dt * remainingP1);
+                }
 
                 // Process Player 2 Sub-Ticks (Dual Mode)
                 if (isDualActive && m_player2) {
                     engine.processPendingSubTicksForPlayer(true, [this, dt, &lastAlphaP2](const UltraCBF::TimestampedInput& evt, double alpha) {
-                        bool isDown = (evt.type == UltraCBF::InputType::Press);
-                        int buttonVal = static_cast<int>(evt.button);
-
-                        this->handleButton(isDown, buttonVal, true);
-
                         float currentAlpha = static_cast<float>(alpha);
                         float deltaAlpha = currentAlpha - lastAlphaP2;
 
                         if (m_player2 && deltaAlpha > 0.0f) {
                             float subTickDt = dt * deltaAlpha;
-                            UltraCBF::extrapolatePlayerPosition(m_player2, subTickDt);
+                            m_player2->update(subTickDt);
                             lastAlphaP2 = currentAlpha;
                         }
+
+                        bool isDown = (evt.type == UltraCBF::InputType::Press);
+                        int buttonVal = static_cast<int>(evt.button);
+                        this->handleButton(isDown, buttonVal, true);
                     });
+
+                    float remainingP2 = 1.0f - lastAlphaP2;
+                    if (m_player2 && remainingP2 > 0.0f) {
+                        m_player2->update(dt * remainingP2);
+                    }
                 }
+
+                m_fields->m_isReplayingSubTickStep = false;
             } else if (m_fields->m_lastPassThroughPressQPC > 0) {
-                // True Vanilla Physical Step Latency Calculation:
-                // Includes GLFW polling delta + step-rounding quantization wait time
+                // True Vanilla Physical Step Latency Calculation
                 uint64_t nowQPC = engine.getCurrentQPC();
                 double pollDeltaMicros = static_cast<double>(nowQPC - m_fields->m_lastPassThroughPressQPC) * (1.0 / static_cast<double>(engine.getQPCFrequency())) * 1000000.0;
                 
                 double alpha = engine.calculateSubTickPhase(m_fields->m_lastPassThroughPressQPC);
                 double stepDurationMicros = static_cast<double>(dt) * 1000000.0;
                 
-                // Vanilla GD delays physics until next step boundary: Wait = (1 - alpha) * stepDuration
                 double totalVanillaLatencyMicros = pollDeltaMicros + ((1.0 - alpha) * stepDurationMicros);
 
                 engine.getProfiler().recordInputLatency(totalVanillaLatencyMicros, alpha, m_fields->m_lastPassThroughPressQPC, nowQPC, engine.getQPCFrequency());
