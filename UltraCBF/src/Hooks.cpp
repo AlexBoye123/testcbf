@@ -33,21 +33,14 @@ void extrapolatePlayerPosition(PlayerObject* player, float subTickDt) {
     float vx = player->m_isPlatformer ? static_cast<float>(player->m_platformerXVelocity) : static_cast<float>(player->getCurrentXVelocity());
     float vy = static_cast<float>(player->m_yVelocity);
 
-    // 1. Grounded Safety Guard (Fixes Subtick API Issue #11 - Weak/Reduced Jump Height)
-    if (player->m_isOnGround) {
-        cocos2d::CCPoint pos = player->getPosition();
-        player->setPosition({pos.x + (vx * subTickDt), pos.y});
-        return;
-    }
-
-    // 2. Slope / D-Block Sliding Safety Guard (Fixes Subtick API Issue #3 - D-Block Slope Glitching)
+    // 1. Slope / D-Block Sliding Safety Guard
     if (player->m_isSliding) {
         cocos2d::CCPoint pos = player->getPosition();
         player->setPosition({pos.x + (vx * subTickDt), pos.y + (vy * subTickDt)});
         return;
     }
 
-    // 3. Free-Air Continuous Kinematic Extrapolation: s = v*t + 0.5*g*scale*t^2
+    // 2. Free-Air Continuous Kinematic Extrapolation: s = v*t + 0.5*g*scale*t^2
     cocos2d::CCPoint pos = player->getPosition();
 
     float gravityTerm = 0.0f;
@@ -78,6 +71,16 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
         bool m_buttonStates[10][2]{{false}};   // Tracks button press state [buttonID][isPlayer2]
         uint64_t m_lastPassThroughPressQPC{0}; // Real-time timestamp tracking for Pass-Through mode
     };
+
+    void resetLevel() {
+        GJBaseGameLayer::resetLevel();
+
+        for (int b = 0; b < 10; ++b) {
+            m_fields->m_buttonStates[b][0] = false;
+            m_fields->m_buttonStates[b][1] = false;
+        }
+        m_fields->m_lastPassThroughPressQPC = 0;
+    }
 
     void handleButton(bool push, int button, bool isPlayer2) {
         auto& engine = UltraCBF::SubTickEngine::get();
@@ -130,6 +133,13 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
 
                 // Process Player 1 Sub-Ticks
                 engine.processPendingSubTicksForPlayer(false, [this, dt, &lastAlphaP1](const UltraCBF::TimestampedInput& evt, double alpha) {
+                    bool isDown = (evt.type == UltraCBF::InputType::Press);
+                    int buttonVal = static_cast<int>(evt.button);
+
+                    // Step 1: Dispatch button state change FIRST so jump force & velocity update
+                    this->handleButton(isDown, buttonVal, false);
+
+                    // Step 2: Extrapolate spatial position using the new jump velocity
                     float currentAlpha = static_cast<float>(alpha);
                     float deltaAlpha = currentAlpha - lastAlphaP1;
 
@@ -138,15 +148,16 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
                         UltraCBF::extrapolatePlayerPosition(m_player1, subTickDt);
                         lastAlphaP1 = currentAlpha;
                     }
-
-                    bool isDown = (evt.type == UltraCBF::InputType::Press);
-                    int buttonVal = static_cast<int>(evt.button);
-                    this->handleButton(isDown, buttonVal, false);
                 });
 
                 // Process Player 2 Sub-Ticks (Dual Mode)
                 if (isDualActive && m_player2) {
                     engine.processPendingSubTicksForPlayer(true, [this, dt, &lastAlphaP2](const UltraCBF::TimestampedInput& evt, double alpha) {
+                        bool isDown = (evt.type == UltraCBF::InputType::Press);
+                        int buttonVal = static_cast<int>(evt.button);
+
+                        this->handleButton(isDown, buttonVal, true);
+
                         float currentAlpha = static_cast<float>(alpha);
                         float deltaAlpha = currentAlpha - lastAlphaP2;
 
@@ -155,10 +166,6 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
                             UltraCBF::extrapolatePlayerPosition(m_player2, subTickDt);
                             lastAlphaP2 = currentAlpha;
                         }
-
-                        bool isDown = (evt.type == UltraCBF::InputType::Press);
-                        int buttonVal = static_cast<int>(evt.button);
-                        this->handleButton(isDown, buttonVal, true);
                     });
                 }
             } else if (m_fields->m_lastPassThroughPressQPC > 0) {
