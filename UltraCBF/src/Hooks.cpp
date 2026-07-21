@@ -72,14 +72,18 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
         uint64_t m_lastPassThroughPressQPC{0}; // Real-time timestamp tracking for Pass-Through mode
     };
 
+    void resetLevel() {
+        GJBaseGameLayer::resetLevel();
+
+        for (int b = 0; b < 10; ++b) {
+            m_fields->m_buttonStates[b][0] = false;
+            m_fields->m_buttonStates[b][1] = false;
+        }
+        m_fields->m_lastPassThroughPressQPC = 0;
+    }
+
     void handleButton(bool push, int button, bool isPlayer2) {
         auto& engine = UltraCBF::SubTickEngine::get();
-
-        // Re-entrancy Guard: If engine is currently replaying a sub-tick event, execute native GD core jump
-        if (engine.isReplayingSubTick()) {
-            GJBaseGameLayer::handleButton(push, button, isPlayer2);
-            return;
-        }
 
         // Pass-Through Mode: Record physical key press time for Vanilla step latency comparison
         if (!engine.isEnabled()) {
@@ -116,9 +120,10 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
         auto& engine = UltraCBF::SubTickEngine::get();
 
         if (UltraCBF::isGameplayActive()) {
-            if (engine.isEnabled()) {
-                engine.beginFrameStep(static_cast<double>(dt));
+            // ALWAYS update frame step boundary calibration so alpha phase calculation is active in both modes
+            engine.beginFrameStep(static_cast<double>(dt));
 
+            if (engine.isEnabled()) {
                 float lastAlphaP1 = 0.0f;
                 float lastAlphaP2 = 0.0f;
 
@@ -162,13 +167,15 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
                     });
                 }
             } else if (m_fields->m_lastPassThroughPressQPC > 0) {
-                // True Vanilla Physical Step Latency Calculation
+                // True Vanilla Physical Step Latency Calculation:
+                // Includes GLFW polling delta + step-rounding quantization wait time
                 uint64_t nowQPC = engine.getCurrentQPC();
                 double pollDeltaMicros = static_cast<double>(nowQPC - m_fields->m_lastPassThroughPressQPC) * (1.0 / static_cast<double>(engine.getQPCFrequency())) * 1000000.0;
                 
                 double alpha = engine.calculateSubTickPhase(m_fields->m_lastPassThroughPressQPC);
                 double stepDurationMicros = static_cast<double>(dt) * 1000000.0;
                 
+                // Vanilla GD delays physics until next step boundary: Wait = (1 - alpha) * stepDuration
                 double totalVanillaLatencyMicros = pollDeltaMicros + ((1.0 - alpha) * stepDurationMicros);
 
                 engine.getProfiler().recordInputLatency(totalVanillaLatencyMicros, alpha, m_fields->m_lastPassThroughPressQPC, nowQPC, engine.getQPCFrequency());
