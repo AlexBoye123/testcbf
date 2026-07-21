@@ -26,17 +26,6 @@ class $modify(UltraGameLayerHook, GJBaseGameLayer) {
         bool m_isReplayingSubTickStep{false};
     };
 
-    void resetLevel() {
-        GJBaseGameLayer::resetLevel();
-
-        for (int b = 0; b < 10; ++b) {
-            m_fields->m_buttonStates[b][0] = false;
-            m_fields->m_buttonStates[b][1] = false;
-        }
-        m_fields->m_lastPassThroughPressQPC = 0;
-        m_fields->m_isReplayingSubTickStep = false;
-    }
-
     void handleButton(bool push, int button, bool isPlayer2) {
         auto& engine = UltraCBF::SubTickEngine::get();
 
